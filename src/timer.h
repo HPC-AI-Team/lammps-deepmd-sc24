@@ -31,6 +31,49 @@ class Timer : protected Pointers {
     COMM,
     MODIFY,
     OUTPUT,
+
+    PREPARE,
+    DO_NEIGHBOR,
+    PROD_ENV,
+    EM_SLICE,
+    TABULATE,
+    EM_MUT_3D,
+    FIT_CAST,
+    TABULATE_GRAD,
+    PROD_FV,
+
+    MATMUL_ADD_0,
+    MATMUL_ADD_1,
+    MATMUL_ADD_2,
+    MATMUL_ADD_3,
+    FAST_TANH,
+    FAST_TANH_GRAD,
+    IDT_MULT,
+    IDT_MULT_GRAD,
+    MATRIX_ADD,
+    MATMUL_3D,
+    FIT_SLICE,
+
+    MATMUL_2D_0,
+    MATMUL_2D_1,
+    MATMUL_2D_2,
+    MATMUL_2D_3,
+
+
+
+
+
+    // PARTICLE_MAP,
+    // MAKE_RHO,
+    // GC_REVERSE,
+    // BRICK2FFT,
+    // POISSON,
+    // FFT1,
+    // FFT2_0,
+    // FFT2_1,
+    // FFT2_2,
+
+
     SYNC,
     ALL,
     DEPHASE,
@@ -102,10 +145,11 @@ class Timer : protected Pointers {
   }
 
   void modify_params(int, char **);
-
- private:
+  
   double cpu_array[NUM_TIMER];
   double wall_array[NUM_TIMER];
+
+ private:
   double previous_cpu;
   double previous_wall;
   double timeout_start;

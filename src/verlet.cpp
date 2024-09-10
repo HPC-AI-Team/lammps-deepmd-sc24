@@ -119,8 +119,10 @@ void Verlet::setup(int flag)
   domain->reset_box();
   comm->setup();
   if (neighbor->style) neighbor->setup_bins();
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] atom x lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->x[0], atom->nlocal * 3, 1);
   comm->exchange();
-  if (atom->sortfreq > 0) atom->sort();
+  // if (atom->sortfreq > 0) atom->sort();
+  // atom->sort();
   comm->borders();
   if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
   domain->image_check();
@@ -129,6 +131,9 @@ void Verlet::setup(int flag)
   neighbor->build(1);
   modify->setup_post_neighbor();
   neighbor->ncalls = 0;
+
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] atom x nall \n"), atom->x[0], (atom->nlocal+atom->nghost) * 3, 1);
+
 
   // compute all forces
 
@@ -139,6 +144,9 @@ void Verlet::setup(int flag)
 
   if (pair_compute_flag) force->pair->compute(eflag,vflag);
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
+
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after pair lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
+
 
   if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) force->bond->compute(eflag,vflag);
@@ -156,10 +164,169 @@ void Verlet::setup(int flag)
   modify->setup_pre_reverse(eflag,vflag);
   if (force->newton) comm->reverse_comm();
 
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
+
+
   modify->setup(vflag);
   output->setup(flag);
   update->setupflag = 0;
+
+  // MPI_Barrier(world);  
+  // MPI_Finalize();
+  // exit(0);
 }
+
+
+
+/* ----------------------------------------------------------------------
+   run for N steps
+------------------------------------------------------------------------- */
+
+void Verlet::run(int n)
+{
+  bigint ntimestep;
+  int nflag,sortflag;
+
+  int n_post_integrate = modify->n_post_integrate;
+  int n_pre_exchange = modify->n_pre_exchange;
+  int n_pre_neighbor = modify->n_pre_neighbor;
+  int n_post_neighbor = modify->n_post_neighbor;
+  int n_pre_force = modify->n_pre_force;
+  int n_pre_reverse = modify->n_pre_reverse;
+  int n_post_force_any = modify->n_post_force_any;
+  int n_end_of_step = modify->n_end_of_step;
+
+  if (atom->sortfreq > 0) sortflag = 1;
+  else sortflag = 0;
+
+  for (int i = 0; i < n; i++) {
+    if (timer->check_timeout(i)) {
+      update->nsteps = i;
+      break;
+    }
+
+    ntimestep = ++update->ntimestep;
+    ev_set(ntimestep);
+
+    // initial time integration
+
+    timer->stamp();
+    modify->initial_integrate(vflag);
+    if (n_post_integrate) modify->post_integrate();
+    timer->stamp(Timer::MODIFY);
+
+    // regular communication vs neighbor list rebuild
+
+    nflag = neighbor->decide();
+
+    if (nflag == 0) {
+      timer->stamp();
+      comm->forward_comm();
+      timer->stamp(Timer::COMM);
+    } else {
+      if (n_pre_exchange) {
+        timer->stamp();
+        modify->pre_exchange();
+        timer->stamp(Timer::MODIFY);
+      }
+      if (triclinic) domain->x2lamda(atom->nlocal);
+      domain->pbc();
+
+      if (domain->box_change) {
+        domain->reset_box();
+        comm->setup();
+        if (neighbor->style) neighbor->setup_bins();
+      }
+      timer->stamp();
+      comm->exchange();
+      if (sortflag && ntimestep >= atom->nextsort) atom->sort();
+      comm->borders();
+      if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
+      timer->stamp(Timer::COMM);
+      if (n_pre_neighbor) {
+        modify->pre_neighbor();
+        timer->stamp(Timer::MODIFY);
+      }
+      neighbor->build(1);
+      timer->stamp(Timer::NEIGH);
+      if (n_post_neighbor) {
+        modify->post_neighbor();
+        timer->stamp(Timer::MODIFY);
+      }
+    }
+
+    // force computations
+    // important for pair to come before bonded contributions
+    // since some bonded potentials tally pairwise energy/virial
+    // and Pair:ev_tally() needs to be called before any tallying
+
+    force_clear();
+
+    // self_timer->stamp();
+    // MPI_Barrier(world);
+    // self_timer->stamp(Timer::PROD_ENV);
+
+    timer->stamp();
+
+    if (n_pre_force) {
+      modify->pre_force(vflag);
+      timer->stamp(Timer::MODIFY);
+    }
+
+    if (pair_compute_flag) {
+      force->pair->compute(eflag,vflag);
+      timer->stamp(Timer::PAIR);
+    }
+
+    // self_timer->stamp();
+    // MPI_Barrier(world);
+    // self_timer->stamp(Timer::PREPARE);
+
+    if (atom->molecular != Atom::ATOMIC) {
+      if (force->bond) force->bond->compute(eflag,vflag);
+      if (force->angle) force->angle->compute(eflag,vflag);
+      if (force->dihedral) force->dihedral->compute(eflag,vflag);
+      if (force->improper) force->improper->compute(eflag,vflag);
+      timer->stamp(Timer::BOND);
+    }
+
+    if (kspace_compute_flag) {
+      force->kspace->compute(eflag,vflag);
+      timer->stamp(Timer::KSPACE);
+    }
+
+    if (n_pre_reverse) {
+      modify->pre_reverse(eflag,vflag);
+      timer->stamp(Timer::MODIFY);
+    }
+
+    // reverse communication of forces
+
+    timer->stamp();
+
+    if (force->newton) {
+      comm->reverse_comm();
+      timer->stamp(Timer::COMM);
+    }
+
+    // force modifications, final time integration, diagnostics
+
+    if (n_post_force_any) modify->post_force(vflag);
+    modify->final_integrate();
+    if (n_end_of_step) modify->end_of_step();
+    timer->stamp(Timer::MODIFY);
+
+    // all output
+
+    if (ntimestep == output->next) {
+      timer->stamp();
+      output->write(ntimestep);
+      timer->stamp(Timer::OUTPUT);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
    setup without output
@@ -220,146 +387,9 @@ void Verlet::setup_minimal(int flag)
 
   modify->setup(vflag);
   update->setupflag = 0;
+
+  
 }
-
-/* ----------------------------------------------------------------------
-   run for N steps
-------------------------------------------------------------------------- */
-
-void Verlet::run(int n)
-{
-  bigint ntimestep;
-  int nflag,sortflag;
-
-  int n_post_integrate = modify->n_post_integrate;
-  int n_pre_exchange = modify->n_pre_exchange;
-  int n_pre_neighbor = modify->n_pre_neighbor;
-  int n_post_neighbor = modify->n_post_neighbor;
-  int n_pre_force = modify->n_pre_force;
-  int n_pre_reverse = modify->n_pre_reverse;
-  int n_post_force_any = modify->n_post_force_any;
-  int n_end_of_step = modify->n_end_of_step;
-
-  if (atom->sortfreq > 0) sortflag = 1;
-  else sortflag = 0;
-
-  for (int i = 0; i < n; i++) {
-    if (timer->check_timeout(i)) {
-      update->nsteps = i;
-      break;
-    }
-
-    ntimestep = ++update->ntimestep;
-    ev_set(ntimestep);
-
-    // initial time integration
-
-    timer->stamp();
-    modify->initial_integrate(vflag);
-    if (n_post_integrate) modify->post_integrate();
-    timer->stamp(Timer::MODIFY);
-
-    // regular communication vs neighbor list rebuild
-
-    nflag = neighbor->decide();
-
-    if (nflag == 0) {
-      timer->stamp();
-      comm->forward_comm();
-      timer->stamp(Timer::COMM);
-    } else {
-      if (n_pre_exchange) {
-        timer->stamp();
-        modify->pre_exchange();
-        timer->stamp(Timer::MODIFY);
-      }
-      if (triclinic) domain->x2lamda(atom->nlocal);
-      domain->pbc();
-      if (domain->box_change) {
-        domain->reset_box();
-        comm->setup();
-        if (neighbor->style) neighbor->setup_bins();
-      }
-      timer->stamp();
-      comm->exchange();
-      if (sortflag && ntimestep >= atom->nextsort) atom->sort();
-      comm->borders();
-      if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
-      timer->stamp(Timer::COMM);
-      if (n_pre_neighbor) {
-        modify->pre_neighbor();
-        timer->stamp(Timer::MODIFY);
-      }
-      neighbor->build(1);
-      timer->stamp(Timer::NEIGH);
-      if (n_post_neighbor) {
-        modify->post_neighbor();
-        timer->stamp(Timer::MODIFY);
-      }
-    }
-
-    // force computations
-    // important for pair to come before bonded contributions
-    // since some bonded potentials tally pairwise energy/virial
-    // and Pair:ev_tally() needs to be called before any tallying
-
-    force_clear();
-
-    timer->stamp();
-
-    if (n_pre_force) {
-      modify->pre_force(vflag);
-      timer->stamp(Timer::MODIFY);
-    }
-
-    if (pair_compute_flag) {
-      force->pair->compute(eflag,vflag);
-      timer->stamp(Timer::PAIR);
-    }
-
-    if (atom->molecular != Atom::ATOMIC) {
-      if (force->bond) force->bond->compute(eflag,vflag);
-      if (force->angle) force->angle->compute(eflag,vflag);
-      if (force->dihedral) force->dihedral->compute(eflag,vflag);
-      if (force->improper) force->improper->compute(eflag,vflag);
-      timer->stamp(Timer::BOND);
-    }
-
-    if (kspace_compute_flag) {
-      force->kspace->compute(eflag,vflag);
-      timer->stamp(Timer::KSPACE);
-    }
-
-    if (n_pre_reverse) {
-      modify->pre_reverse(eflag,vflag);
-      timer->stamp(Timer::MODIFY);
-    }
-
-    // reverse communication of forces
-
-    if (force->newton) {
-      comm->reverse_comm();
-      timer->stamp(Timer::COMM);
-    }
-
-    // force modifications, final time integration, diagnostics
-
-    if (n_post_force_any) modify->post_force(vflag);
-    modify->final_integrate();
-    if (n_end_of_step) modify->end_of_step();
-    timer->stamp(Timer::MODIFY);
-
-    // all output
-
-    if (ntimestep == output->next) {
-      timer->stamp();
-      output->write(ntimestep);
-      timer->stamp(Timer::OUTPUT);
-    }
-  }
-}
-
-/* ---------------------------------------------------------------------- */
 
 void Verlet::cleanup()
 {

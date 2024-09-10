@@ -136,6 +136,7 @@ void utils::logmesg(LAMMPS *lmp, const std::string &mesg)
 {
   if (lmp->screen) fputs(mesg.c_str(), lmp->screen);
   if (lmp->logfile) fputs(mesg.c_str(), lmp->logfile);
+  flush_buffers(lmp);
 }
 
 void utils::fmtargs_logmesg(LAMMPS *lmp, fmt::string_view format, fmt::format_args args)

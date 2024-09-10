@@ -840,6 +840,7 @@ void LAMMPS::create()
                               // must be after modify so can create Computes
   update = new Update(this);  // must be after output, force, neighbor
   timer = new Timer(this);
+  self_timer = new Timer(this);
 
   python = new Python(this);
 

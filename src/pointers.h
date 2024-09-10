@@ -85,6 +85,7 @@ class Pointers {
     group(ptr->group),
     output(ptr->output),
     timer(ptr->timer),
+    self_timer(ptr->self_timer),
     world(ptr->world),
     infile(ptr->infile),
     screen(ptr->screen),
@@ -119,6 +120,7 @@ class Pointers {
   Group *&group;
   Output *&output;
   Timer *&timer;
+  Timer *&self_timer;
 
   MPI_Comm &world;
   FILE *&infile;

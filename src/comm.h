@@ -65,6 +65,10 @@ class Comm : protected Pointers {
   double rcbcutfrac;       // fractional RCB cut by this proc
   int rcbcutdim;           // dimension of RCB cut
 
+  bool debug_flag;
+  bool fp16_flag;
+
+
   // methods
 
   Comm(class LAMMPS *);

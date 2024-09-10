@@ -6,13 +6,13 @@ SHELL = /bin/sh
 # compiler/linker settings
 # specify flags and libraries needed for your compiler
 
-CC =		mpicxx
-CCFLAGS =	-g -O3 -restrict -fopenmp -std=c++11
+CC =		mpiFCCpx
+CCFLAGS =	-Ofast -Nclang -fopenmp  -std=c++11 -mcpu=a64fx -march=armv8.3-a+sve
 SHFLAGS =	-fPIC
 DEPFLAGS =	-M
 
-LINK =		mpicxx
-LINKFLAGS =	-g -O -fopenmp -std=c++11
+LINK =		mpiFCCpx
+LINKFLAGS =	-Ofast -Nclang -fopenmp -std=c++11 -mcpu=a64fx -march=armv8.3-a+sve
 LIB = 
 SIZE =		size
 
@@ -61,6 +61,15 @@ FFT_LIB =
 # PATH = path(s) for JPEG library and/or PNG library
 # LIB = name(s) of JPEG library and/or PNG library
 
+# TF_INC = -I/vol0001/hp230257/lijianxiong/numa_aware_lammps/lammps_ref/src/TEST_TF/tensorflow-2.2.0-cc/include
+# TF_PATH = -L/vol0001/hp230257/lijianxiong/numa_aware_lammps/lammps_ref/src/TEST_TF/tensorflow-2.2.0-cc/lib
+# TF_LIB =   -ltensorflow_cc -ltensorflow_framework  -lxed -lfjcrt
+
+# CBLAS_PATH= -L/vol0001/hp230257/lijianxiong/numa_aware_lammps/CBLAS/openblas/lib
+# CBLAS_LIB = -lopenblas
+
+SVE_LIB = -lfjlapacksve
+
 JPG_INC =
 JPG_PATH =
 JPG_LIB =
@@ -77,9 +86,9 @@ JPG_LIB =
 include Makefile.package.settings
 include Makefile.package
 
-EXTRA_INC = $(LMP_INC) $(PKG_INC) $(MPI_INC) $(FFT_INC) $(JPG_INC) $(PKG_SYSINC)
-EXTRA_PATH = $(PKG_PATH) $(MPI_PATH) $(FFT_PATH) $(JPG_PATH) $(PKG_SYSPATH)
-EXTRA_LIB = $(PKG_LIB) $(MPI_LIB) $(FFT_LIB) $(JPG_LIB) $(PKG_SYSLIB) $(DYN_LIB)
+EXTRA_INC = $(LMP_INC) $(PKG_INC) $(MPI_INC) $(FFT_INC) $(JPG_INC) $(PKG_SYSINC)  $(TF_INC)
+EXTRA_PATH = $(PKG_PATH) $(MPI_PATH) $(FFT_PATH) $(JPG_PATH) $(PKG_SYSPATH)  $(TF_PATH) $(CBLAS_PATH)
+EXTRA_LIB = $(PKG_LIB) $(MPI_LIB) $(FFT_LIB) $(JPG_LIB) $(PKG_SYSLIB) $(DYN_LIB)  $(TF_LIB) $(SVE_LIB) $(CBLAS_LIB)
 EXTRA_CPP_DEPENDS = $(PKG_CPP_DEPENDS)
 EXTRA_LINK_DEPENDS = $(PKG_LINK_DEPENDS)
 
@@ -111,7 +120,7 @@ $(SHLIB): $(OBJ) $(EXTRA_LINK_DEPENDS)
 # Compilation rules
 
 %.o:%.cpp
-	$(CC) $(CCFLAGS) $(SHFLAGS) $(EXTRA_INC) -c $<
+	$(CC) $(CCFLAGS) $(SHFLAGS) $(EXTRA_INC)  -c $<
 
 # Individual dependencies
 

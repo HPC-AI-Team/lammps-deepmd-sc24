@@ -352,10 +352,10 @@ gitversion:
 	@echo '#ifndef LMP_GIT_VERSION_H' >  ${TMPNAME}.lmpgitversion
 	@echo '#define LMP_GIT_VERSION_H' >> ${TMPNAME}.lmpgitversion
 	@if (type git && test -e ../.git ) >> /dev/null 2>> /dev/null ; then \
-	  git='true';					\
-	  commit=$$(git rev-parse HEAD);		\
-	  branch=$$(git rev-parse --abbrev-ref HEAD);	\
-	  describe=$$(git describe --dirty=-modified);	\
+	  git='false';					\
+	  commit=$$(unknown);		\
+	  branch=$$(unknown);	\
+	  describe=$$(unknown);	\
 	else \
 	  git='false' ;					\
 	  commit='(unknown)' ;				\

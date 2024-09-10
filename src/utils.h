@@ -85,6 +85,32 @@ namespace utils {
 
   void logmesg(LAMMPS *lmp, const std::string &mesg);
 
+     template <typename TYPE> void logmesg_arry(LAMMPS *lmp, const std::string &mesg, TYPE *n_array, int n, int step)
+  {
+   std::string tmp;
+   tmp += "[info]" + mesg;
+   for(int i = 0; i < n ;i += step) {
+      tmp += fmt::format("  {}:{}", i, n_array[i]);
+      if(i != 0 && (i % 100 == 0)) tmp += "\n      ";
+   }
+   tmp += "\n";
+   logmesg(lmp, tmp);
+  }
+
+   template <typename TYPE> void logmesg_arry_x(LAMMPS *lmp, const std::string &mesg, TYPE *n_array, int n, int step)
+  {
+   std::string tmp;
+   tmp += "[info]" + mesg + "\n      ";
+   for(int i = 0; i < n ;i += step * 3) {
+      tmp += fmt::format(" ({}: {:<3.9f},{:<3.9f},{:<3.9f})", i / 3, n_array[i], n_array[i+1],n_array[i+2]);
+      // tmp += fmt::format(" ({}: {},{},{})", i / 3, n_array[i], n_array[i+1],n_array[i+2]);
+      if(i != 0 && (i % 100 == 0)) tmp += "\n      ";
+   }
+   tmp += "\n";
+   logmesg(lmp, tmp);
+  }
+  
+
   /*! Return text redirecting the user to a specific paragraph in the manual
    *
    * The LAMMPS manual contains detailed detailed explanations for errors and

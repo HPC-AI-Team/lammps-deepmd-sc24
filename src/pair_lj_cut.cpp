@@ -27,7 +27,6 @@
 #include "neighbor.h"
 #include "respa.h"
 #include "update.h"
-
 #include <cmath>
 #include <cstring>
 
@@ -62,12 +61,13 @@ PairLJCut::~PairLJCut()
     memory->destroy(lj4);
     memory->destroy(offset);
   }
+
 }
 
 /* ---------------------------------------------------------------------- */
 
 void PairLJCut::compute(int eflag, int vflag)
-{
+{  
   int i, j, ii, jj, inum, jnum, itype, jtype;
   double xtmp, ytmp, ztmp, delx, dely, delz, evdwl, fpair;
   double rsq, r2inv, r6inv, forcelj, factor_lj;

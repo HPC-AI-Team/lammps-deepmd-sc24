@@ -153,6 +153,7 @@ void Run::command(int narg, char **arg)
 
   update->whichflag = 1;
   timer->init_timeout();
+  self_timer->init_timeout();
 
   if (nevery == 0) {
     update->nsteps = nsteps;
@@ -173,8 +174,11 @@ void Run::command(int narg, char **arg)
 
     timer->init();
     timer->barrier_start();
+    self_timer->init();
+    self_timer->barrier_start();
     update->integrate->run(nsteps);
     timer->barrier_stop();
+    self_timer->barrier_stop();
 
     update->integrate->cleanup();
 
@@ -193,6 +197,7 @@ void Run::command(int narg, char **arg)
     while (nleft > 0 || iter == 0) {
       if (timer->is_timeout()) break;
       timer->init_timeout();
+      self_timer->init_timeout();
 
       nsteps = MIN(nleft,nevery);
 
@@ -214,8 +219,11 @@ void Run::command(int narg, char **arg)
 
       timer->init();
       timer->barrier_start();
+      self_timer->init();
+      self_timer->barrier_start();
       update->integrate->run(nsteps);
       timer->barrier_stop();
+      self_timer->barrier_stop();
 
       update->integrate->cleanup();
 

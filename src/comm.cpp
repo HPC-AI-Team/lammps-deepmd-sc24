@@ -81,6 +81,20 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
   rcbnew = 0;
   multi_reduce = 0;
 
+  debug_flag = fp16_flag = false;
+
+  if (getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1) {
+    debug_flag = true;
+  }
+  if (getenv("TEST_FP16") != nullptr && atoi(getenv("TEST_FP16")) == 1) {
+    fp16_flag = true;
+  }
+
+  if (me == 0){
+    utils::logmesg(lmp,"  COMM_DEBUG_FLAG {} \n",debug_flag);
+    utils::logmesg(lmp,"  TEST_FP16 {} \n",fp16_flag);
+  }
+
   // use of OpenMP threads
   // query OpenMP for number of threads/process set by user at run-time
   // if the OMP_NUM_THREADS environment variable is not set, we default

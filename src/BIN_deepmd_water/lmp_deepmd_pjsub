@@ -1,0 +1,115 @@
+#!/bin/sh -x
+#PJM -L  "freq=2200"
+#PJM -L  "node=4x6x4"
+#PJM --mpi "shape=4x6x4"
+#PJM -L  "rscgrp=small-s1,eco_state=2"
+#PJM -L  "elapse=00:20:00"
+#PJM --mpi "max-proc-per-node=4"
+#PJM -g hp230257
+#PJM -s
+#
+# 8x12x8=768
+# 12x15x12=2160
+# 16x24x16=6144
+# 24x32x24=18432
+# 32x36x32=36864
+# 36x36x36=46656
+
+export OMP_NUM_THREADS=12
+
+# export LD_LIBRARY_PATH=../../../OPENBLAS/lib:$LD_LIBRARY_PATH
+export tensorflow_root=../../TEST_TF/tensorflow-2.2.0-cc
+export CPATH=$tensorflow_root/include:$CPATH
+export LD_LIBRARY_PATH=$tensorflow_root/lib:$LD_LIBRARY_PATH
+
+export OPENBLAS_NUM_THREADS=1
+
+export COMM_OMP_FLAG=0
+export COMM_BORDER_ONE_FLAG=1
+export COMM_PIGGY_FLAG=1
+export THREAD_POOL_FLAG=1
+export COMM_DEBUG_FLAG=0
+export TEST_FP16=1
+
+
+export TEST_FP16=1
+
+module sw lang/tcsds-1.2.38
+
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+
+export TEST_FP16=0
+
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_float  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_cblas  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+
+mpiexec ./lmp_execute_double  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_434                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_464                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_868                          # Execute a.out
+sleep 5
+mpiexec ./lmp_execute_double  -in ./in.deepmd_868                          # Execute a.out
+sleep 5

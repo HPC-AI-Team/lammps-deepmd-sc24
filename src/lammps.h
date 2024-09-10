@@ -16,6 +16,10 @@
 
 #include <cstdio>
 #include <mpi.h>
+// #include "deepmd_util.h"
+
+#define DEBUG_MSG comm->debug_flag
+#define T_THREAD 12
 
 namespace LAMMPS_NS {
 
@@ -37,6 +41,10 @@ class LAMMPS {
   class Group *group;              // groups of atoms
   class Output *output;            // thermo/dump/restart
   class Timer *timer;              // CPU timing info
+  class Timer *self_timer;              // CPU timing info
+
+   // class Timer *pair_timer[12];
+   // int num_local_nall[12][101];
                                    //
   class KokkosLMP *kokkos;         // KOKKOS accelerator class
   class AtomKokkos *atomKK;        // KOKKOS version of Atom class
@@ -74,6 +82,9 @@ class LAMMPS {
                              // set by -mpicolor command line arg
 
   void *mdicomm;    // for use with MDI code coupling library
+
+  class DeepPot **deep_pots;
+
 
   const char *match_style(const char *style, const char *name);
   static const char *installed_packages[];

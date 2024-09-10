@@ -31,6 +31,7 @@
 #include "timer.h"              // IWYU pragma: keep
 #include "universe.h"
 #include "update.h"
+#include "deepmd_util.h"
 
 #include <cmath>
 #include <cstring>
@@ -337,8 +338,73 @@ void Finish::end(int flag)
 
     mpi_timings("Neigh",timer,Timer::NEIGH,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("Comm",timer,Timer::COMM,world,nprocs,nthreads,me,time_loop,screen,logfile);
-    mpi_timings("Output",timer,Timer::OUTPUT,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("Output",timer,Timer::OUTPUT,world,nprocs,nthreads,me,time_loop,screen,logfile);    
     mpi_timings("Modify",timer,Timer::MODIFY,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    
+    // double tc[100], tw[100];
+    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+    //   tc[ii] = 0.0; tw[ii] = 0.0;
+    //   for(int jj = 0; jj < comm->nthreads; jj++) {
+    //     tc[ii] += lmp->deep_pots[jj]->t_timer->cpu_array[ii]; tw[ii] += lmp->deep_pots[jj]->t_timer->wall_array[ii];
+    //   }
+    // }
+    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+    //   self_timer->cpu_array[ii] = tc[ii] / comm->nthreads; self_timer->wall_array[ii] = tw[ii] / comm->nthreads;
+    // }
+
+
+    // double tc[100], tw[100];
+    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+    //   tc[ii] = 0.0; tw[ii] = 0.0;
+    //   for(int jj = 0; jj < comm->nthreads; jj++) {
+    //     if(tc[ii] < lmp->deep_pots[jj]->t_timer->cpu_array[ii]) tc[ii] = lmp->deep_pots[jj]->t_timer->cpu_array[ii];
+    //     if(tw[ii] < lmp->deep_pots[jj]->t_timer->wall_array[ii]) tw[ii] = lmp->deep_pots[jj]->t_timer->wall_array[ii];
+    //   }
+    // }
+    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+    //   self_timer->cpu_array[ii] = tc[ii]; self_timer->wall_array[ii] = tw[ii];
+    // }
+    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+    //   self_timer->cpu_array[ii] = lmp->deep_pots[0]->t_timer->cpu_array[ii]; 
+    //   self_timer->wall_array[ii] = lmp->deep_pots[0]->t_timer->wall_array[ii];
+    // }
+
+    mpi_timings("PREPARE",self_timer,Timer::PREPARE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("DO_NEIGHBOR",self_timer,Timer::DO_NEIGHBOR,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("PROD_ENV",self_timer,Timer::PROD_ENV,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("TABULATE",self_timer,Timer::TABULATE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("EM_SLICE",self_timer,Timer::EM_SLICE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("EM_MUT_3D",self_timer,Timer::EM_MUT_3D,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("FIT_CAST",self_timer,Timer::FIT_CAST,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("TABULATE_GRAD",self_timer,Timer::TABULATE_GRAD,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("PROD_FV",self_timer,Timer::PROD_FV,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_ADD_0",self_timer,Timer::MATMUL_ADD_0,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_ADD_1",self_timer,Timer::MATMUL_ADD_1,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_ADD_2",self_timer,Timer::MATMUL_ADD_2,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_ADD_3",self_timer,Timer::MATMUL_ADD_3,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("FAST_TANH",self_timer,Timer::FAST_TANH,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("FAST_TANH_GRAD",self_timer,Timer::FAST_TANH_GRAD,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("IDT_MULT",self_timer,Timer::IDT_MULT,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("IDT_MULT_GRAD",self_timer,Timer::IDT_MULT_GRAD,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATRIX_ADD",self_timer,Timer::MATRIX_ADD,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_3D",self_timer,Timer::MATMUL_3D,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("FIT_SLICE",self_timer,Timer::FIT_SLICE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_2D_0",self_timer,Timer::MATMUL_2D_0,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_2D_1",self_timer,Timer::MATMUL_2D_1,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_2D_2",self_timer,Timer::MATMUL_2D_2,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    mpi_timings("MATMUL_2D_3",self_timer,Timer::MATMUL_2D_3,world,nprocs,nthreads,me,time_loop,screen,logfile);
+
+    // mpi_timings("PARTICLE_MAP",self_timer,Timer::PARTICLE_MAP,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("MAKE_RHO",self_timer,Timer::MAKE_RHO,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("GC_REVERSE",self_timer,Timer::GC_REVERSE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("BRICK2FFT",self_timer,Timer::BRICK2FFT,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("POISSON",self_timer,Timer::POISSON,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("FFT1",self_timer,Timer::FFT1,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("FFT2_0",self_timer,Timer::FFT2_0,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("FFT2_1",self_timer,Timer::FFT2_1,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("FFT2_2",self_timer,Timer::FFT2_2,world,nprocs,nthreads,me,time_loop,screen,logfile);
+
+
     if (timer->has_sync())
       mpi_timings("Sync",timer,Timer::SYNC,world,nprocs,nthreads,me,time_loop,screen,logfile);
 
@@ -630,11 +696,11 @@ void mpi_timings(const char *label, Timer *t, enum Timer::ttype tt,
     tmp = time/time_loop*100.0;
     std::string mesg;
     if (t->has_full())
-      mesg = fmt::format("{:<8s}| {:<10.5g} | {:<10.5g} | {:<10.5g} |{:6.1f} |"
+      mesg = fmt::format("{:<15s}| {:<10.5g} | {:<10.5g} | {:<10.5g} |{:6.1f} |"
                          "{:6.1f} |{:6.2f}\n",
                          label,time_min,time,time_max,time_sq,time_cpu,tmp);
     else
-      mesg = fmt::format("{:<8s}| {:<10.5g} | {:<10.5g} | {:<10.5g} |{:6.1f} |"
+      mesg = fmt::format("{:<15s}| {:<10.5g} | {:<10.5g} | {:<10.5g} |{:6.1f} |"
                          "{:6.2f}\n",label,time_min,time,time_max,time_sq,tmp);
     if (scr) fputs(mesg.c_str(),scr);
     if (log) fputs(mesg.c_str(),log);
