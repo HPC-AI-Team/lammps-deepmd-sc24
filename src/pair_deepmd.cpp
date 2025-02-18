@@ -160,6 +160,11 @@ PairDeepMD::PairDeepMD(LAMMPS *lmp)
 
   num_threads = comm->nthreads;
 
+  first_time = new int[num_threads];
+  memset(first_time, 0, sizeof(int) * num_threads);
+
+  if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD::comstruct number thread {} \n", num_threads);
+
   lmp_lists.resize(num_threads);
 
   suffix_flag |= Suffix::OMP;
@@ -194,7 +199,7 @@ PairDeepMD::~PairDeepMD() {
 
 void PairDeepMD::compute(int eflag, int vflag) {
     ev_init(eflag, vflag);
-    #pragma omp parallel LMP_DEFAULT_NONE LMP_SHARED(eflag,vflag)
+    #pragma omp parallel shared(eflag,vflag)
     {
 
       int tid = omp_get_thread_num();

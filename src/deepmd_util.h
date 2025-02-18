@@ -380,7 +380,7 @@ public:
   // FPTYPE  **c_table_info_v1, **c_table_v1;
   FPTYPE  **c_matrix[4], **c_bias[4], **c_idt[4],  **c_matrix_t[4];
 
-  float16_t  **c_matrix_fp16[4],  **c_matrix_t_fp16[4];
+  // float16_t  **c_matrix_fp16[4],  **c_matrix_t_fp16[4];
   
   std::vector<int> n_neuron;
   std::vector<FPTYPE> box;
@@ -437,8 +437,6 @@ private:
 
   int *nei_num_v;
 
-  
-
   // std::vector<int> fwd_map, bkw_map;
 
   std::string mesg;
@@ -470,7 +468,7 @@ private:
   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
   FPTYPE *layer_1_grad_reg, *layer_2_grad_reg;
 
-  __fp16 *gemm_fp16_buf;
+  // __fp16 *gemm_fp16_buf;
 
   FPTYPE *xyz_scatter_1_grad, *xyz_scatter_2_grad;
 

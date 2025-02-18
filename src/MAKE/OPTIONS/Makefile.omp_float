@@ -6,15 +6,16 @@ SHELL = /bin/sh
 # compiler/linker settings
 # specify flags and libraries needed for your compiler
 
-CC =		mpiFCCpx
-CCFLAGS =	-Ofast -Nclang -fopenmp  -std=c++11 -mcpu=a64fx -march=armv8.3-a+sve
+CC =		mpicxx
+CCFLAGS =	-Ofast -std=c++11 -fopenmp   -mavx512f -march=skylake-avx512  -fsanitize=address -fsanitize-recover=all 
 SHFLAGS =	-fPIC
 DEPFLAGS =	-M
 
-LINK =		mpiFCCpx
-LINKFLAGS =	-Ofast -Nclang -fopenmp -std=c++11 -mcpu=a64fx -march=armv8.3-a+sve
-LIB = 
+LINK =		mpicxx
+LINKFLAGS =	-Ofast -std=c++11 -fopenmp   -mavx512f -march=skylake-avx512  -fsanitize=address -fsanitize-recover=all 
+LIB =
 SIZE =		size
+
 
 ARCHIVE =	ar
 ARFLAGS =	-rc
@@ -70,7 +71,7 @@ FFT_LIB =
 # CBLAS_PATH= -L/vol0001/hp230257/lijianxiong/numa_aware_lammps/CBLAS/openblas/lib
 # CBLAS_LIB = -lopenblas
 
-SVE_LIB = -lfjlapacksve
+SVE_LIB = -DMKL_ILP64 -lmkl_intel_ilp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
 
 JPG_INC =
 JPG_PATH =

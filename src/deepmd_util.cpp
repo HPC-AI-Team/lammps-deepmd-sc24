@@ -14,14 +14,14 @@
 #include "comm.h"
 #include <math.h>
 #include "memory.h"
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-   #include <cblas.h>
-#ifdef __cplusplus
-}
-#endif
+// #ifdef __cplusplus
+// extern "C"
+// {
+// #endif
+//    #include <cblas.h>
+// #ifdef __cplusplus
+// }
+// #endif
 
 using namespace LAMMPS_NS;
 
@@ -109,7 +109,7 @@ void AtomMap::init(int* in_begin,
     fwd_idx_map[sorting[ii].second] = ii;
     // 排序后的类型
     atype[ii] = sorting[ii].first;
-  }
+  }  
 }
 
 
@@ -637,6 +637,7 @@ void DeepPot::init_value() {
   //     }
   //   }
   // }
+
 }
 
 void DeepPot::reserve_buffer(int _max_atoms, int _nall) {
@@ -717,7 +718,7 @@ void DeepPot::reserve_buffer(int _max_atoms, int _nall) {
   layer_1_grad_reg = new FPTYPE[_max_atoms * n_neuron[1]];  memset(layer_1_grad_reg, 0, sizeof(FPTYPE)* _max_atoms * n_neuron[1]);
   layer_2_grad_reg = new FPTYPE[_max_atoms * n_neuron[2]];  memset(layer_2_grad_reg, 0, sizeof(FPTYPE)* _max_atoms * n_neuron[2]);
 
-  gemm_fp16_buf = new float16_t[_max_atoms * (n_neuron[0] + dim_descrpt)];  memset(gemm_fp16_buf, 0, sizeof(float16_t)* _max_atoms * (n_neuron[0] + dim_descrpt));
+  // gemm_fp16_buf = new float16_t[_max_atoms * (n_neuron[0] + dim_descrpt)];  memset(gemm_fp16_buf, 0, sizeof(float16_t)* _max_atoms * (n_neuron[0] + dim_descrpt));
 
   xyz_scatter_1_grad = new FPTYPE[_max_atoms * last_layer_size * 4];  memset(xyz_scatter_1_grad, 0, sizeof(FPTYPE)* _max_atoms * last_layer_size * 4);
   xyz_scatter_2_grad = new FPTYPE[_max_atoms * n_axis_neuron * 4];    memset(xyz_scatter_2_grad, 0, sizeof(FPTYPE)* _max_atoms * n_axis_neuron * 4);
@@ -773,16 +774,16 @@ void DeepPot::init(DeepPot *_deep_pot, int _tid) {
     c_bias[ii] = new FPTYPE*[ntypes];
     c_idt[ii] = new FPTYPE*[ntypes];
     c_matrix_t[ii] = new FPTYPE*[ntypes];
-    c_matrix_fp16[ii] = new float16_t*[ntypes];
-    c_matrix_t_fp16[ii] = new float16_t*[ntypes];
+    // c_matrix_fp16[ii] = new float16_t*[ntypes];
+    // c_matrix_t_fp16[ii] = new float16_t*[ntypes];
     for(int type_i = 0; type_i < ntypes; type_i++) {
       c_matrix[ii][type_i] = _deep_pot->c_matrix[ii][type_i];
       c_bias[ii][type_i] = _deep_pot->c_bias[ii][type_i];
       c_idt[ii][type_i] = _deep_pot->c_idt[ii][type_i];
 
       c_matrix_t[ii][type_i] = _deep_pot->c_matrix_t[ii][type_i];
-      c_matrix_fp16[ii][type_i] = _deep_pot->c_matrix_fp16[ii][type_i];
-      c_matrix_t_fp16[ii][type_i] = _deep_pot->c_matrix_t_fp16[ii][type_i];
+      // c_matrix_fp16[ii][type_i] = _deep_pot->c_matrix_fp16[ii][type_i];
+      // c_matrix_t_fp16[ii][type_i] = _deep_pot->c_matrix_t_fp16[ii][type_i];
     }
   }
 
@@ -968,12 +969,12 @@ void DeepPot::store_pb_data() {
 
 void DeepPot::load_data_from_dat(std::string graph_path) {
   if(ntypes == 1 && comm->tabulate_flag == 5) {
-    PB_param_type1 pb_param_type1;
+    PB_param_type1 *pb_param_type1 = new PB_param_type1;
 
     if(comm->me == 0) {
       // std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
       std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
-      ifs.read((char*)&pb_param_type1 , sizeof(PB_param_type1));
+      ifs.read((char*)pb_param_type1 , sizeof(PB_param_type1));
       ifs.close();
 
       // FILE *fid;
@@ -982,28 +983,30 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
       // fclose(fid);
       if(DEBUG_MSG) utils::logmesg(lmp, "[NUMA] load_data_from_dat graph_path {} \n", graph_path);
 
-      MPI_Bcast((char*)&pb_param_type1, sizeof(PB_param_type1), MPI_CHAR, 0, world);
+      MPI_Bcast((char*)pb_param_type1, sizeof(PB_param_type1), MPI_CHAR, 0, world);
     } else {
-      MPI_Bcast((char*)&pb_param_type1, sizeof(PB_param_type1), MPI_CHAR, 0, world);
+      MPI_Bcast((char*)pb_param_type1, sizeof(PB_param_type1), MPI_CHAR, 0, world);
     }
 
 
-    c_matrix[0][0] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][0][i] = (FPTYPE)pb_param_type1.c_matrix_0[i];
-    c_matrix[1][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][0][i] = (FPTYPE)pb_param_type1.c_matrix_1[i];
-    c_matrix[2][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][0][i] = (FPTYPE)pb_param_type1.c_matrix_2[i];
-    c_matrix[3][0] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][0][i] = (FPTYPE)pb_param_type1.c_matrix_3[i];
-    c_bias[0][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][0][i]   = (FPTYPE)pb_param_type1.c_bias_0[i];
-    c_bias[1][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][0][i]   = (FPTYPE)pb_param_type1.c_bias_1[i];
-    c_bias[2][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][0][i]   = (FPTYPE)pb_param_type1.c_bias_2[i];
-    c_bias[3][0]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][0][i]   = (FPTYPE)pb_param_type1.c_bias_3[i];
-    c_idt[0][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][0][i]    = (FPTYPE)pb_param_type1.c_idt_0[i];
-    c_idt[1][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][0][i]    = (FPTYPE)pb_param_type1.c_idt_1[i];
-    c_idt[2][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][0][i]    = (FPTYPE)pb_param_type1.c_idt_2[i];
-    c_idt[3][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][0][i]    = (FPTYPE)pb_param_type1.c_idt_3[i];
-    c_table[0]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[0][i]     = (FPTYPE)pb_param_type1.c_table[i];
-    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type1.c_table_info[i];
-    std_ones       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     std_ones[i]       = (FPTYPE)pb_param_type1.std_ones[i];
-    avg_zero       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     avg_zero[i]       = (FPTYPE)pb_param_type1.avg_zero[i];
+    c_matrix[0][0] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][0][i] = (FPTYPE)pb_param_type1->c_matrix_0[i];
+    c_matrix[1][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][0][i] = (FPTYPE)pb_param_type1->c_matrix_1[i];
+    c_matrix[2][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][0][i] = (FPTYPE)pb_param_type1->c_matrix_2[i];
+    c_matrix[3][0] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][0][i] = (FPTYPE)pb_param_type1->c_matrix_3[i];
+    c_bias[0][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][0][i]   = (FPTYPE)pb_param_type1->c_bias_0[i];
+    c_bias[1][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][0][i]   = (FPTYPE)pb_param_type1->c_bias_1[i];
+    c_bias[2][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][0][i]   = (FPTYPE)pb_param_type1->c_bias_2[i];
+    c_bias[3][0]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][0][i]   = (FPTYPE)pb_param_type1->c_bias_3[i];
+    c_idt[0][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][0][i]    = (FPTYPE)pb_param_type1->c_idt_0[i];
+    c_idt[1][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][0][i]    = (FPTYPE)pb_param_type1->c_idt_1[i];
+    c_idt[2][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][0][i]    = (FPTYPE)pb_param_type1->c_idt_2[i];
+    c_idt[3][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][0][i]    = (FPTYPE)pb_param_type1->c_idt_3[i];
+    c_table[0]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[0][i]     = (FPTYPE)pb_param_type1->c_table[i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type1->c_table_info[i];
+    std_ones       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     std_ones[i]       = (FPTYPE)pb_param_type1->std_ones[i];
+    avg_zero       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     avg_zero[i]       = (FPTYPE)pb_param_type1->avg_zero[i];
+
+    delete pb_param_type1;
     
   } else if (ntypes == 1 && comm->tabulate_flag == 1) {
     PB_param_type4 *pb_param_type4 = new PB_param_type4;
@@ -1042,12 +1045,12 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
     delete pb_param_type4;
 
   } else if (ntypes == 2 && comm->tabulate_flag == 5) {
-    PB_param_type2 pb_param_type2;
+    PB_param_type2 *pb_param_type2 = new PB_param_type2;
 
     if(comm->me == 0) {
       // std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
       std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
-      ifs.read((char*)&pb_param_type2 , sizeof(PB_param_type2));
+      ifs.read((char*)pb_param_type2 , sizeof(PB_param_type2));
       ifs.close();
 
       // FILE *fid;
@@ -1056,33 +1059,32 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
       // fclose(fid);
       if(DEBUG_MSG) utils::logmesg(lmp, "[NUMA] load_data_from_dat graph_path {} \n", graph_path);
 
-      MPI_Bcast((char*)&pb_param_type2, sizeof(PB_param_type2), MPI_CHAR, 0, world);
+      MPI_Bcast((char*)pb_param_type2, sizeof(PB_param_type2), MPI_CHAR, 0, world);
     } else {
-      MPI_Bcast((char*)&pb_param_type2, sizeof(PB_param_type2), MPI_CHAR, 0, world);
+      MPI_Bcast((char*)pb_param_type2, sizeof(PB_param_type2), MPI_CHAR, 0, world);
     }
 
     for(int type_i = 0; type_i < ntypes; type_i++) {
-      c_matrix[0][type_i] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][type_i][i] = (FPTYPE)pb_param_type2.c_matrix_0[type_i][i];
-      c_matrix[1][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][type_i][i] = (FPTYPE)pb_param_type2.c_matrix_1[type_i][i];
-      c_matrix[2][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][type_i][i] = (FPTYPE)pb_param_type2.c_matrix_2[type_i][i];
-      c_matrix[3][type_i] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][type_i][i] = (FPTYPE)pb_param_type2.c_matrix_3[type_i][i];
-      c_bias[0][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][type_i][i]   = (FPTYPE)pb_param_type2.c_bias_0[type_i][i];
-      c_bias[1][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][type_i][i]   = (FPTYPE)pb_param_type2.c_bias_1[type_i][i];
-      c_bias[2][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][type_i][i]   = (FPTYPE)pb_param_type2.c_bias_2[type_i][i];
-      c_bias[3][type_i]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][type_i][i]   = (FPTYPE)pb_param_type2.c_bias_3[type_i][i];
-      c_idt[0][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][type_i][i]    = (FPTYPE)pb_param_type2.c_idt_0[type_i][i];
-      c_idt[1][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][type_i][i]    = (FPTYPE)pb_param_type2.c_idt_1[type_i][i];
-      c_idt[2][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][type_i][i]    = (FPTYPE)pb_param_type2.c_idt_2[type_i][i];
-      c_idt[3][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][type_i][i]    = (FPTYPE)pb_param_type2.c_idt_3[type_i][i];
+      c_matrix[0][type_i] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][type_i][i] = (FPTYPE)pb_param_type2->c_matrix_0[type_i][i];
+      c_matrix[1][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][type_i][i] = (FPTYPE)pb_param_type2->c_matrix_1[type_i][i];
+      c_matrix[2][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][type_i][i] = (FPTYPE)pb_param_type2->c_matrix_2[type_i][i];
+      c_matrix[3][type_i] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][type_i][i] = (FPTYPE)pb_param_type2->c_matrix_3[type_i][i];
+      c_bias[0][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][type_i][i]   = (FPTYPE)pb_param_type2->c_bias_0[type_i][i];
+      c_bias[1][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][type_i][i]   = (FPTYPE)pb_param_type2->c_bias_1[type_i][i];
+      c_bias[2][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][type_i][i]   = (FPTYPE)pb_param_type2->c_bias_2[type_i][i];
+      c_bias[3][type_i]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][type_i][i]   = (FPTYPE)pb_param_type2->c_bias_3[type_i][i];
+      c_idt[0][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][type_i][i]    = (FPTYPE)pb_param_type2->c_idt_0[type_i][i];
+      c_idt[1][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][type_i][i]    = (FPTYPE)pb_param_type2->c_idt_1[type_i][i];
+      c_idt[2][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][type_i][i]    = (FPTYPE)pb_param_type2->c_idt_2[type_i][i];
+      c_idt[3][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][type_i][i]    = (FPTYPE)pb_param_type2->c_idt_3[type_i][i];
     }
 
-    std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     std_ones[i]       = (FPTYPE)pb_param_type2.std_ones[i];
-    avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     avg_zero[i]       = (FPTYPE)pb_param_type2.avg_zero[i];
-    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type2.c_table_info[i];
+    std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     std_ones[i]       = (FPTYPE)pb_param_type2->std_ones[i];
+    avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     avg_zero[i]       = (FPTYPE)pb_param_type2->avg_zero[i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type2->c_table_info[i];
 
     for(int type_i = 0; type_i < ntypes*ntypes; type_i++) {
-      if(comm->tabulate_flag == 1)  {c_table[type_i]     = new FPTYPE[13600*256];    for(int i = 0; i < 13600*256; i++) c_table[type_i][i]     = i*i*(type_i + 1);}
-      else                          {c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_param_type2.c_table[type_i][i];}
+      c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_param_type2->c_table[type_i][i];
     }
   } else if (ntypes == 2 && comm->tabulate_flag == 1) {
     PB_param_type3 *pb_param_type3 = new PB_param_type3;
@@ -1132,17 +1134,17 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
 
   for(int ii = 0; ii < 4; ii++) {
     c_matrix_t[ii] = new FPTYPE*[ntypes];
-    c_matrix_fp16[ii] = new float16_t*[ntypes];
-    c_matrix_t_fp16[ii] = new float16_t*[ntypes];
+    // c_matrix_fp16[ii] = new float16_t*[ntypes];
+    // c_matrix_t_fp16[ii] = new float16_t*[ntypes];
     for(int type_i = 0;  type_i < ntypes; type_i++) {
       c_matrix_t[ii][type_i] = new FPTYPE[matrix_size[ii][0] * matrix_size[ii][1]];
-      c_matrix_t_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
-      c_matrix_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
+      // c_matrix_t_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
+      // c_matrix_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
       for(int mm = 0; mm < matrix_size[ii][0]; mm++) {
         for(int nn = 0; nn < matrix_size[ii][1]; nn++) {
           c_matrix_t[ii][type_i][nn*matrix_size[ii][0]+mm] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
-          c_matrix_t_fp16[ii][type_i][nn*matrix_size[ii][0]+mm] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
-          c_matrix_fp16[ii][type_i][mm*matrix_size[ii][1]+nn] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
+          // c_matrix_t_fp16[ii][type_i][nn*matrix_size[ii][0]+mm] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
+          // c_matrix_fp16[ii][type_i][mm*matrix_size[ii][1]+nn] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
         }
       }
     }
@@ -1233,17 +1235,19 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   
   // if(comm->me == 0) store_pb_data();
   // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] save data success \n"));
-
+  
   // if(tid == 0) MPI_Barrier(MPI_COMM_WORLD);
   // if(tid == 0) MPI_Finalize();
-
+  
   max_nnei = 0;
   for(auto i : sel) if(i > max_nnei) max_nnei = i;
   max_all_nei = ntypes == 1 ? nnei :  3 * nnei;
-
+  
   table_convert(c_table, ntypes);
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] finish table_convert \n"));
   init_value();
-
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] finish init_value \n"));
+  
   for(int i = 0; i < ntypes * nem; i++) {
     std_ones[i] = 1./std_ones[i];
   }
@@ -1545,11 +1549,11 @@ void DeepPot::fitting_net() {
       //   matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
       // }
       // #else
-      if(comm->fp16_flag){
-        matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
-      } else {
+      // if(comm->fp16_flag){
+      //   matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
+      // } else {
         matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
-      }
+      // }
       // #endif
 
       t_timer->stamp(Timer::MATMUL_ADD_0);
@@ -1664,11 +1668,11 @@ void DeepPot::fitting_net() {
 
       #pragma omp barrier
 
-      if(comm->fp16_flag){
-        matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad, gemm_fp16_buf);
-      } else {
+      // if(comm->fp16_flag){
+      //   matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad, gemm_fp16_buf);
+      // } else {
         matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
-      }
+      // }
       // #endif
     // #endif
 
@@ -2268,8 +2272,6 @@ void DeepPot::tabulateFusion_sve(int _loc,
   FPTYPE *out,
   const FPTYPE* _table) {
 
-  #ifdef __ARM_FEATURE_SVE
-
   const double lower   = c_table_info[0];
   const double upper   = c_table_info[1];
   const double _max    = c_table_info[2];
@@ -2303,100 +2305,98 @@ void DeepPot::tabulateFusion_sve(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
-      assert(last_layer_size % svcntd() == 0);
+      assert(last_layer_size % 8 == 0);
 
-      svbool_t ptrue = svptrue_b64();
-      svfloat64_t vnei_sub_jj = svdup_f64((double(_nnei - jj)));
-      svfloat64_t vxx = svdup_f64(xx);
-      svfloat64_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat64_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat64_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat64_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat64_t vll0 = svdup_f64(ll[0]);
-      svfloat64_t vll1 = svdup_f64(ll[1]);
-      svfloat64_t vll2 = svdup_f64(ll[2]);
-      svfloat64_t vll3 = svdup_f64(ll[3]);
-      svfloat64_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat64_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat64_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat64_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
+      __m512d vnei_sub_jj = _mm512_set1_pd(FPTYPE(_nnei - jj));
+      __m512d vxx = _mm512_set1_pd(xx);
+      __m512d vxx2 = _mm512_mul_pd(vxx, vxx);
+      __m512d vxx3 = _mm512_mul_pd(vxx2, vxx);
+      __m512d vxx4 = _mm512_mul_pd(vxx2, vxx2);
+      __m512d vxx5 = _mm512_mul_pd(vxx3, vxx2);
+      __m512d vll0 = _mm512_set1_pd(ll[0]);
+      __m512d vll1 = _mm512_set1_pd(ll[1]);
+      __m512d vll2 = _mm512_set1_pd(ll[2]);
+      __m512d vll3 = _mm512_set1_pd(ll[3]);
+      __m512d vll0_ = _mm512_mul_pd(vll0, vnei_sub_jj);
+      __m512d vll1_ = _mm512_mul_pd(vll1, vnei_sub_jj);
+      __m512d vll2_ = _mm512_mul_pd(vll2, vnei_sub_jj);
+      __m512d vll3_ = _mm512_mul_pd(vll3, vnei_sub_jj);
 
-      for(int kk = 0; kk < last_layer_size; kk += svcntd() * 2){
+      for(int kk = 0; kk < last_layer_size; kk += 8 * 2){
         const double* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat64_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat64_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat64_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat64_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat64_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat64_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat64_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat64_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat64_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat64_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat64_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat64_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+        __m512d va0_0 = _mm512_load_pd(TABLE + 8 * 0);
+        __m512d va0_1 = _mm512_load_pd(TABLE + 8 * 1);
+        __m512d va1_0 = _mm512_load_pd(TABLE + 8 * 2);
+        __m512d va1_1 = _mm512_load_pd(TABLE + 8 * 3);
+        __m512d va2_0 = _mm512_load_pd(TABLE + 8 * 4);
+        __m512d va2_1 = _mm512_load_pd(TABLE + 8 * 5);
+        __m512d va3_0 = _mm512_load_pd(TABLE + 8 * 6);
+        __m512d va3_1 = _mm512_load_pd(TABLE + 8 * 7);
+        __m512d va4_0 = _mm512_load_pd(TABLE + 8 * 8);
+        __m512d va4_1 = _mm512_load_pd(TABLE + 8 * 9);
+        __m512d va5_0 = _mm512_load_pd(TABLE + 8 * 10);
+        __m512d va5_1 = _mm512_load_pd(TABLE + 8 * 11);
 
-        svfloat64_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat64_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
-        svfloat64_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat64_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat64_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat64_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat64_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat64_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat64_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat64_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
-        svfloat64_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat64_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat64_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat64_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat64_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat64_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
-        svfloat64_t vvar_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat64_t vvar_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        __m512d tmp1_0 = _mm512_fmadd_pd(va1_0, vxx, va0_0);
+        __m512d tmp1_1 = _mm512_fmadd_pd(va1_1, vxx, va0_1);
+        __m512d tmp2_0 = _mm512_mul_pd(va2_0, vxx2);
+        __m512d tmp2_1 = _mm512_mul_pd(va2_1, vxx2);
+        __m512d tmp3_0 = _mm512_mul_pd(va3_0, vxx3);
+        __m512d tmp3_1 = _mm512_mul_pd(va3_1, vxx3);
+        __m512d tmp4_0 = _mm512_mul_pd(va4_0, vxx4);
+        __m512d tmp4_1 = _mm512_mul_pd(va4_1, vxx4);
+        __m512d tmp5_0 = _mm512_mul_pd(va5_0, vxx5);
+        __m512d tmp5_1 = _mm512_mul_pd(va5_1, vxx5);
+        __m512d tmp6_0 = _mm512_add_pd(tmp1_0, tmp2_0);
+        __m512d tmp6_1 = _mm512_add_pd(tmp1_1, tmp2_1);
+        __m512d tmp7_0 = _mm512_add_pd(tmp3_0, tmp4_0);
+        __m512d tmp7_1 = _mm512_add_pd(tmp3_1, tmp4_1);
+        __m512d tmp8_0 = _mm512_add_pd(tmp6_0, tmp5_0);
+        __m512d tmp8_1 = _mm512_add_pd(tmp6_1, tmp5_1);
+        __m512d vvar_0 = _mm512_add_pd(tmp7_0, tmp8_0);
+        __m512d vvar_1 = _mm512_add_pd(tmp7_1, tmp8_1);
 
-        svfloat64_t vout0_0 = svld1(ptrue, out0 + kk);
-        svfloat64_t vout0_1 = svld1(ptrue, out0 + kk + svcntd());
-        svfloat64_t vout1_0 = svld1(ptrue, out1 + kk);
-        svfloat64_t vout1_1 = svld1(ptrue, out1 + kk + svcntd());
-        svfloat64_t vout2_0 = svld1(ptrue, out2 + kk);
-        svfloat64_t vout2_1 = svld1(ptrue, out2 + kk + svcntd());
-        svfloat64_t vout3_0 = svld1(ptrue, out3 + kk);
-        svfloat64_t vout3_1 = svld1(ptrue, out3 + kk + svcntd());
+        __m512d vout0_0 = _mm512_load_pd(out0 + kk);
+        __m512d vout0_1 = _mm512_load_pd(out0 + kk + 8);
+        __m512d vout1_0 = _mm512_load_pd(out1 + kk);
+        __m512d vout1_1 = _mm512_load_pd(out1 + kk + 8);
+        __m512d vout2_0 = _mm512_load_pd(out2 + kk);
+        __m512d vout2_1 = _mm512_load_pd(out2 + kk + 8);
+        __m512d vout3_0 = _mm512_load_pd(out3 + kk);
+        __m512d vout3_1 = _mm512_load_pd(out3 + kk + 8);
 
         if(unloop){
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1_);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1_);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2_);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2_);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3_);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3_);
-        } else {
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3);
+          vout0_0 = _mm512_fmadd_pd(vvar_0, vll0_, vout0_0);
+          vout0_1 = _mm512_fmadd_pd(vvar_1, vll0_, vout0_1);
+          vout1_0 = _mm512_fmadd_pd(vvar_0, vll1_, vout1_0);
+          vout1_1 = _mm512_fmadd_pd(vvar_1, vll1_, vout1_1);
+          vout2_0 = _mm512_fmadd_pd(vvar_0, vll2_, vout2_0);
+          vout2_1 = _mm512_fmadd_pd(vvar_1, vll2_, vout2_1);
+          vout3_0 = _mm512_fmadd_pd(vvar_0, vll3_, vout3_0);
+          vout3_1 = _mm512_fmadd_pd(vvar_1, vll3_, vout3_1);
+        }else{
+          vout0_0 = _mm512_fmadd_pd(vvar_0, vll0, vout0_0);
+          vout0_1 = _mm512_fmadd_pd(vvar_1, vll0, vout0_1);
+          vout1_0 = _mm512_fmadd_pd(vvar_0, vll1, vout1_0);
+          vout1_1 = _mm512_fmadd_pd(vvar_1, vll1, vout1_1);
+          vout2_0 = _mm512_fmadd_pd(vvar_0, vll2, vout2_0);
+          vout2_1 = _mm512_fmadd_pd(vvar_1, vll2, vout2_1);
+          vout3_0 = _mm512_fmadd_pd(vvar_0, vll3, vout3_0);
+          vout3_1 = _mm512_fmadd_pd(vvar_1, vll3, vout3_1);
         }
-        svst1(ptrue, out0 + kk, vout0_0);
-        svst1(ptrue, out0 + kk + svcntd(), vout0_1);
-        svst1(ptrue, out1 + kk, vout1_0);
-        svst1(ptrue, out1 + kk + svcntd(), vout1_1);
-        svst1(ptrue, out2 + kk, vout2_0);
-        svst1(ptrue, out2 + kk + svcntd(), vout2_1);
-        svst1(ptrue, out3 + kk, vout3_0);
-        svst1(ptrue, out3 + kk + svcntd(), vout3_1);
+        _mm512_store_pd(out0 + kk, vout0_0);
+        _mm512_store_pd(out0 + kk + 8, vout0_1);
+        _mm512_store_pd(out1 + kk, vout1_0);
+        _mm512_store_pd(out1 + kk + 8, vout1_1);
+        _mm512_store_pd(out2 + kk, vout2_0);
+        _mm512_store_pd(out2 + kk + 8, vout2_1);
+        _mm512_store_pd(out3 + kk, vout3_0);
+        _mm512_store_pd(out3 + kk + 8, vout3_1);
       }
 
       if (unloop) break;
     }
   }
-  #endif
 }
 #else 
 void DeepPot::tabulateFusion_sve(int _loc,
@@ -2415,8 +2415,9 @@ void DeepPot::tabulateFusion_sve(int _loc,
   // for every atom, execute a small manual gemm ~
   // FPTYPE * res = new FPTYPE[4 * last_layer_size];
   // #pragma omp parallel for
+
   for (int ii = 0; ii < _loc; ii++) {
-    svbool_t ptrue = svptrue_b32();
+    // svbool_t ptrue = svptrue_b32();
 
     FPTYPE ll[4] = {0};
     FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
@@ -2426,20 +2427,6 @@ void DeepPot::tabulateFusion_sve(int _loc,
     FPTYPE* out1 = out + ii * last_layer_size * 4 + 1 * last_layer_size;
     FPTYPE* out2 = out + ii * last_layer_size * 4 + 2 * last_layer_size;
     FPTYPE* out3 = out + ii * last_layer_size * 4 + 3 * last_layer_size;
-
-    // int do_prefetch = prefetch_flag;
-    // if(do_prefetch) {
-    //   for(int jj = 0; jj < PREFETCH_SIZE; jj++) {
-    //     FPTYPE xx = em_x[ii * _nnei + jj]; 
-    //     int table_idx = 0;
-    //     locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);        
-    //     const float* TABLE = &_table[table_idx * last_layer_size * 6];
-    //     for(int kk = 0; kk < last_layer_size * 6 / svcntw(); kk++){
-    //       svprfb_vnum(ptrue, TABLE, kk, SV_PLDL2STRM) ;
-    //     }
-    //   }
-    // }
-    // void svprfb_vnum(svbool_t pg, const void *base, int64_t vnum, svprfop op) ;
 
     for (int jj = 0; jj < _nnei; jj++) { 
       ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
@@ -2454,100 +2441,99 @@ void DeepPot::tabulateFusion_sve(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
-      assert(last_layer_size % svcntw() == 0);
+      assert(last_layer_size % 16 == 0);
 
-      svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
-      svfloat32_t vxx = svdup_f32(xx);
-      svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat32_t vll0 = svdup_f32(ll[0]);
-      svfloat32_t vll1 = svdup_f32(ll[1]);
-      svfloat32_t vll2 = svdup_f32(ll[2]);
-      svfloat32_t vll3 = svdup_f32(ll[3]);
-      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
+      __m512 vnei_sub_jj = _mm512_set1_ps(float(_nnei - jj));
+      __m512 vxx = _mm512_set1_ps(xx);
+      __m512 vxx2 = _mm512_mul_ps(vxx, vxx);
+      __m512 vxx3 = _mm512_mul_ps(vxx2, vxx);
+      __m512 vxx4 = _mm512_mul_ps(vxx2, vxx2);
+      __m512 vxx5 = _mm512_mul_ps(vxx3, vxx2);
+      __m512 vll0 = _mm512_set1_ps(ll[0]);
+      __m512 vll1 = _mm512_set1_ps(ll[1]);
+      __m512 vll2 = _mm512_set1_ps(ll[2]);
+      __m512 vll3 = _mm512_set1_ps(ll[3]);
+      __m512 vll0_ = _mm512_mul_ps(vll0, vnei_sub_jj);
+      __m512 vll1_ = _mm512_mul_ps(vll1, vnei_sub_jj);
+      __m512 vll2_ = _mm512_mul_ps(vll2, vnei_sub_jj);
+      __m512 vll3_ = _mm512_mul_ps(vll3, vnei_sub_jj);
 
-      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2){
+      for(int kk = 0; kk < last_layer_size; kk += 16 * 2){
         const float* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11); 
+        __m512 va0_0 = _mm512_load_ps(TABLE + 16 * 0);
+        __m512 va0_1 = _mm512_load_ps(TABLE + 16 * 1);
+        __m512 va1_0 = _mm512_load_ps(TABLE + 16 * 2);
+        __m512 va1_1 = _mm512_load_ps(TABLE + 16 * 3);
+        __m512 va2_0 = _mm512_load_ps(TABLE + 16 * 4);
+        __m512 va2_1 = _mm512_load_ps(TABLE + 16 * 5);
+        __m512 va3_0 = _mm512_load_ps(TABLE + 16 * 6);
+        __m512 va3_1 = _mm512_load_ps(TABLE + 16 * 7);
+        __m512 va4_0 = _mm512_load_ps(TABLE + 16 * 8);
+        __m512 va4_1 = _mm512_load_ps(TABLE + 16 * 9);
+        __m512 va5_0 = _mm512_load_ps(TABLE + 16 * 10);
+        __m512 va5_1 = _mm512_load_ps(TABLE + 16 * 11);
 
-        svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
-        svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
-        svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
-        svfloat32_t vvar_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat32_t vvar_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        __m512 tmp1_0 = _mm512_fmadd_ps(va1_0, vxx, va0_0);
+        __m512 tmp1_1 = _mm512_fmadd_ps(va1_1, vxx, va0_1);
+        __m512 tmp2_0 = _mm512_mul_ps(va2_0, vxx2);
+        __m512 tmp2_1 = _mm512_mul_ps(va2_1, vxx2);
+        __m512 tmp3_0 = _mm512_mul_ps(va3_0, vxx3);
+        __m512 tmp3_1 = _mm512_mul_ps(va3_1, vxx3);
+        __m512 tmp4_0 = _mm512_mul_ps(va4_0, vxx4);
+        __m512 tmp4_1 = _mm512_mul_ps(va4_1, vxx4);
+        __m512 tmp5_0 = _mm512_mul_ps(va5_0, vxx5);
+        __m512 tmp5_1 = _mm512_mul_ps(va5_1, vxx5);
+        __m512 tmp6_0 = _mm512_add_ps(tmp1_0, tmp2_0);
+        __m512 tmp6_1 = _mm512_add_ps(tmp1_1, tmp2_1);
+        __m512 tmp7_0 = _mm512_add_ps(tmp3_0, tmp4_0);
+        __m512 tmp7_1 = _mm512_add_ps(tmp3_1, tmp4_1);
+        __m512 tmp8_0 = _mm512_add_ps(tmp6_0, tmp5_0);
+        __m512 tmp8_1 = _mm512_add_ps(tmp6_1, tmp5_1);
+        __m512 vvar_0 = _mm512_add_ps(tmp7_0, tmp8_0);
+        __m512 vvar_1 = _mm512_add_ps(tmp7_1, tmp8_1);
 
-        svfloat32_t vout0_0 = svld1(ptrue, out0 + kk);
-        svfloat32_t vout0_1 = svld1(ptrue, out0 + kk + svcntw());
-        svfloat32_t vout1_0 = svld1(ptrue, out1 + kk);
-        svfloat32_t vout1_1 = svld1(ptrue, out1 + kk + svcntw());
-        svfloat32_t vout2_0 = svld1(ptrue, out2 + kk);
-        svfloat32_t vout2_1 = svld1(ptrue, out2 + kk + svcntw());
-        svfloat32_t vout3_0 = svld1(ptrue, out3 + kk);
-        svfloat32_t vout3_1 = svld1(ptrue, out3 + kk + svcntw());
+        __m512 vout0_0 = _mm512_load_ps(out0 + kk);
+        __m512 vout0_1 = _mm512_load_ps(out0 + kk + 16);
+        __m512 vout1_0 = _mm512_load_ps(out1 + kk);
+        __m512 vout1_1 = _mm512_load_ps(out1 + kk + 16);
+        __m512 vout2_0 = _mm512_load_ps(out2 + kk);
+        __m512 vout2_1 = _mm512_load_ps(out2 + kk + 16);
+        __m512 vout3_0 = _mm512_load_ps(out3 + kk);
+        __m512 vout3_1 = _mm512_load_ps(out3 + kk + 16);
 
         if(unloop){
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1_);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1_);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2_);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2_);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3_);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3_);
+          vout0_0 = _mm512_fmadd_ps(vvar_0, vll0_, vout0_0);
+          vout0_1 = _mm512_fmadd_ps(vvar_1, vll0_, vout0_1);
+          vout1_0 = _mm512_fmadd_ps(vvar_0, vll1_, vout1_0);
+          vout1_1 = _mm512_fmadd_ps(vvar_1, vll1_, vout1_1);
+          vout2_0 = _mm512_fmadd_ps(vvar_0, vll2_, vout2_0);
+          vout2_1 = _mm512_fmadd_ps(vvar_1, vll2_, vout2_1);
+          vout3_0 = _mm512_fmadd_ps(vvar_0, vll3_, vout3_0);
+          vout3_1 = _mm512_fmadd_ps(vvar_1, vll3_, vout3_1);
         }else{
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3);
+          vout0_0 = _mm512_fmadd_ps(vvar_0, vll0, vout0_0);
+          vout0_1 = _mm512_fmadd_ps(vvar_1, vll0, vout0_1);
+          vout1_0 = _mm512_fmadd_ps(vvar_0, vll1, vout1_0);
+          vout1_1 = _mm512_fmadd_ps(vvar_1, vll1, vout1_1);
+          vout2_0 = _mm512_fmadd_ps(vvar_0, vll2, vout2_0);
+          vout2_1 = _mm512_fmadd_ps(vvar_1, vll2, vout2_1);
+          vout3_0 = _mm512_fmadd_ps(vvar_0, vll3, vout3_0);
+          vout3_1 = _mm512_fmadd_ps(vvar_1, vll3, vout3_1);
         }
-        svst1(ptrue, out0 + kk, vout0_0);
-        svst1(ptrue, out0 + kk + svcntw(), vout0_1);
-        svst1(ptrue, out1 + kk, vout1_0);
-        svst1(ptrue, out1 + kk + svcntw(), vout1_1);
-        svst1(ptrue, out2 + kk, vout2_0);
-        svst1(ptrue, out2 + kk + svcntw(), vout2_1);
-        svst1(ptrue, out3 + kk, vout3_0);
-        svst1(ptrue, out3 + kk + svcntw(), vout3_1);
+        _mm512_store_ps(out0 + kk, vout0_0);
+        _mm512_store_ps(out0 + kk + 16, vout0_1);
+        _mm512_store_ps(out1 + kk, vout1_0);
+        _mm512_store_ps(out1 + kk + 16, vout1_1);
+        _mm512_store_ps(out2 + kk, vout2_0);
+        _mm512_store_ps(out2 + kk + 16, vout2_1);
+        _mm512_store_ps(out3 + kk, vout3_0);
+        _mm512_store_ps(out3 + kk + 16, vout3_1);
       }
       if (unloop) break;
     }
   }
 }
 #endif
-
 
 void DeepPot::tabulate_fusion_grad_cpu_packing(
     int _loc, int _nnei,
@@ -2659,7 +2645,6 @@ void DeepPot::tabulate_fusion_grad_cpu_packing(
   // print_v(_nnei * 4, fmt::format("dy_dem:"), dy_dem);
 }
 
-
 #ifdef HIGH_PREC
 void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
     int _loc, int _nnei,
@@ -2669,7 +2654,6 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
     FPTYPE *em_x, 
     FPTYPE *em, 
     FPTYPE *dy) {
-  #ifdef __ARM_FEATURE_SVE
 
   memset(dy_dem_x, 0.0, sizeof(double) * _loc * _nnei);
   memset(dy_dem, 0.0, sizeof(double) * _loc * _nnei * 4);
@@ -2705,160 +2689,167 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
 
       double* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
 
-      svfloat64_t vgard = svdup_f64(0.);
-      svfloat64_t vdy_dem_0 = svdup_f64(0.);
-      svfloat64_t vdy_dem_1 = svdup_f64(0.);
-      svfloat64_t vdy_dem_2 = svdup_f64(0.);
-      svfloat64_t vdy_dem_3 = svdup_f64(0.);
+      __m512d vgard     = _mm512_setzero_pd();
+      __m512d vdy_dem_0 = _mm512_setzero_pd();
+      __m512d vdy_dem_1 = _mm512_setzero_pd();
+      __m512d vdy_dem_2 = _mm512_setzero_pd();
+      __m512d vdy_dem_3 = _mm512_setzero_pd();
 
-      assert(last_layer_size % svcntd() == 0);
-      svfloat64_t vtwo = svdup_f64(2.);
-      svfloat64_t vthree = svdup_f64(3.);
-      svfloat64_t vfour = svdup_f64(4.);
-      svfloat64_t vfive = svdup_f64(5.);
+      assert(last_layer_size % 8 == 0);
+      __m512d vtwo   = _mm512_set1_pd(2.f);
+      __m512d vthree = _mm512_set1_pd(3.f);
+      __m512d vfour  = _mm512_set1_pd(4.f);
+      __m512d vfive  = _mm512_set1_pd(5.f);
 
-      svbool_t ptrue = svptrue_b64();
-      svfloat64_t vnei_sub_jj = svdup_f64((double(_nnei - jj)));
-      svfloat64_t vxx = svdup_f64(xx);
+      // svbool_t ptrue = svptrue_b64();
+      __m512d vnei_sub_jj = _mm512_set1_pd(double(_nnei - jj));
+      __m512d vxx = _mm512_set1_pd(xx);
 
-      svfloat64_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat64_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat64_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat64_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat64_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
-      svfloat64_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
-      svfloat64_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
-      svfloat64_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
-      svfloat64_t vll0 = svdup_f64(ll[0]);
-      svfloat64_t vll1 = svdup_f64(ll[1]);
-      svfloat64_t vll2 = svdup_f64(ll[2]);
-      svfloat64_t vll3 = svdup_f64(ll[3]);
-      svfloat64_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat64_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat64_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat64_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
-      for(int kk = 0; kk < last_layer_size; kk += svcntd() * 2){
-        svfloat64_t vrr0_0 = svld1(ptrue, dy0 + kk);
-        svfloat64_t vrr0_1 = svld1(ptrue, dy0 + kk + svcntd());
-        svfloat64_t vrr1_0 = svld1(ptrue, dy1 + kk);
-        svfloat64_t vrr1_1 = svld1(ptrue, dy1 + kk + svcntd());
-        svfloat64_t vrr2_0 = svld1(ptrue, dy2 + kk);
-        svfloat64_t vrr2_1 = svld1(ptrue, dy2 + kk + svcntd());
-        svfloat64_t vrr3_0 = svld1(ptrue, dy3 + kk);
-        svfloat64_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntd());
+       __m512d vxx2 = _mm512_mul_pd(vxx, vxx);
+      __m512d vxx3 = _mm512_mul_pd(vxx2, vxx);
+      __m512d vxx4 = _mm512_mul_pd(vxx2, vxx2);
+      __m512d vxx5 = _mm512_mul_pd(vxx3, vxx2);
+      __m512d v2xx1 = _mm512_mul_pd(vtwo, vxx);
+      __m512d v3xx2 = _mm512_mul_pd(vthree, vxx2);
+      __m512d v4xx3 = _mm512_mul_pd(vfour, vxx3);
+      __m512d v5xx4 = _mm512_mul_pd(vfive, vxx4);
+      __m512d vll0 = _mm512_set1_pd(ll[0]);
+      __m512d vll1 = _mm512_set1_pd(ll[1]);
+      __m512d vll2 = _mm512_set1_pd(ll[2]);
+      __m512d vll3 = _mm512_set1_pd(ll[3]);
+      __m512d vll0_ = _mm512_mul_pd(vll0, vnei_sub_jj);
+      __m512d vll1_ = _mm512_mul_pd(vll1, vnei_sub_jj);
+      __m512d vll2_ = _mm512_mul_pd(vll2, vnei_sub_jj);
+      __m512d vll3_ = _mm512_mul_pd(vll3, vnei_sub_jj);
+
+      for(int kk = 0; kk < last_layer_size; kk += 8 * 2){
+        __m512d vrr0_0 = _mm512_load_pd(dy0 + kk);
+        __m512d vrr0_1 = _mm512_load_pd(dy0 + kk + 8);
+        __m512d vrr1_0 = _mm512_load_pd(dy1 + kk);
+        __m512d vrr1_1 = _mm512_load_pd(dy1 + kk + 8);
+        __m512d vrr2_0 = _mm512_load_pd(dy2 + kk);
+        __m512d vrr2_1 = _mm512_load_pd(dy2 + kk + 8);
+        __m512d vrr3_0 = _mm512_load_pd(dy3 + kk);
+        __m512d vrr3_1 = _mm512_load_pd(dy3 + kk + 8);
 
         const double* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat64_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat64_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat64_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat64_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat64_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat64_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat64_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat64_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat64_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat64_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat64_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat64_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+        __m512d va0_0 = _mm512_load_pd(TABLE + 8 * 0);
+        __m512d va0_1 = _mm512_load_pd(TABLE + 8 * 1);
+        __m512d va1_0 = _mm512_load_pd(TABLE + 8 * 2);
+        __m512d va1_1 = _mm512_load_pd(TABLE + 8 * 3);
+        __m512d va2_0 = _mm512_load_pd(TABLE + 8 * 4);
+        __m512d va2_1 = _mm512_load_pd(TABLE + 8 * 5);
+        __m512d va3_0 = _mm512_load_pd(TABLE + 8 * 6);
+        __m512d va3_1 = _mm512_load_pd(TABLE + 8 * 7);
+        __m512d va4_0 = _mm512_load_pd(TABLE + 8 * 8);
+        __m512d va4_1 = _mm512_load_pd(TABLE + 8 * 9);
+        __m512d va5_0 = _mm512_load_pd(TABLE + 8 * 10);
+        __m512d va5_1 = _mm512_load_pd(TABLE + 8 * 11);
 
         // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
-        svfloat64_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat64_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
-        svfloat64_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat64_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat64_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat64_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat64_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat64_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat64_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat64_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
-        svfloat64_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat64_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat64_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat64_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat64_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat64_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
-        svfloat64_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat64_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        __m512d tmp1_0 = _mm512_fmadd_pd(va1_0, vxx, va0_0);
+        __m512d tmp1_1 = _mm512_fmadd_pd(va1_1, vxx, va0_1);
+
+        __m512d tmp2_0 = _mm512_mul_pd(va2_0, vxx2);
+        __m512d tmp2_1 = _mm512_mul_pd(va2_1, vxx2);
+        __m512d tmp3_0 = _mm512_mul_pd(va3_0, vxx3);
+        __m512d tmp3_1 = _mm512_mul_pd(va3_1, vxx3);
+        __m512d tmp4_0 = _mm512_mul_pd(va4_0, vxx4);
+        __m512d tmp4_1 = _mm512_mul_pd(va4_1, vxx4);
+        __m512d tmp5_0 = _mm512_mul_pd(va5_0, vxx5);
+        __m512d tmp5_1 = _mm512_mul_pd(va5_1, vxx5);
+
+        __m512d tmp6_0 = _mm512_add_pd(tmp1_0, tmp2_0);
+        __m512d tmp6_1 = _mm512_add_pd(tmp1_1, tmp2_1);
+        __m512d tmp7_0 = _mm512_add_pd(tmp3_0, tmp4_0);
+        __m512d tmp7_1 = _mm512_add_pd(tmp3_1, tmp4_1);
+        __m512d tmp8_0 = _mm512_add_pd(tmp6_0, tmp5_0);
+        __m512d tmp8_1 = _mm512_add_pd(tmp6_1, tmp5_1);
+
+        __m512d vres_0 = _mm512_add_pd(tmp8_0, tmp7_0);
+        __m512d vres_1 = _mm512_add_pd(tmp8_1, tmp7_1);
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
-        svfloat64_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
-        svfloat64_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
-        svfloat64_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
-        svfloat64_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
-        svfloat64_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
-        svfloat64_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
-        svfloat64_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
-        svfloat64_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
-        svfloat64_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
-        svfloat64_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
-        svfloat64_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
-        svfloat64_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
-        svfloat64_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
-        svfloat64_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+        __m512d tmp9_0 = _mm512_fmadd_pd(va2_0, v2xx1, va1_0);
+        __m512d tmp9_1 = _mm512_fmadd_pd(va2_1, v2xx1, va1_1);
+
+        __m512d tmp10_0 = _mm512_mul_pd(va3_0, v3xx2);
+        __m512d tmp10_1 = _mm512_mul_pd(va3_1, v3xx2);
+        __m512d tmp11_0 = _mm512_mul_pd(va4_0, v4xx3);
+        __m512d tmp11_1 = _mm512_mul_pd(va4_1, v4xx3);
+        __m512d tmp12_0 = _mm512_mul_pd(va5_0, v5xx4);
+        __m512d tmp12_1 = _mm512_mul_pd(va5_1, v5xx4);
+
+        __m512d tmp13_0 = _mm512_add_pd(tmp9_0, tmp10_0);
+        __m512d tmp13_1 = _mm512_add_pd(tmp9_1, tmp10_1);
+        __m512d tmp14_0 = _mm512_add_pd(tmp11_0, tmp12_0);
+        __m512d tmp14_1 = _mm512_add_pd(tmp11_1, tmp12_1);
+        __m512d tmp15_0 = _mm512_add_pd(tmp13_0, tmp14_0); 
+        __m512d tmp15_1 = _mm512_add_pd(tmp13_1, tmp14_1); 
 
         // dot(ll, rr);
-        svfloat64_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);
-        svfloat64_t tmp16_1 = svmul_z(ptrue, vll0, vrr0_1);
-        svfloat64_t tmp17_0 = svmul_z(ptrue, vll1, vrr1_0);
-        svfloat64_t tmp17_1 = svmul_z(ptrue, vll1, vrr1_1);
-        svfloat64_t tmp18_0 = svmul_z(ptrue, vll2, vrr2_0);
-        svfloat64_t tmp18_1 = svmul_z(ptrue, vll2, vrr2_1);
-        svfloat64_t tmp19_0 = svmul_z(ptrue, vll3, vrr3_0);
-        svfloat64_t tmp19_1 = svmul_z(ptrue, vll3, vrr3_1);
-        svfloat64_t tmp20_0 = svadd_z(ptrue, tmp16_0, tmp17_0);
-        svfloat64_t tmp20_1 = svadd_z(ptrue, tmp16_1, tmp17_1);
-        svfloat64_t tmp21_0 = svadd_z(ptrue, tmp18_0, tmp19_0);
-        svfloat64_t tmp21_1 = svadd_z(ptrue, tmp18_1, tmp19_1);
-        svfloat64_t tmp22_0 = svadd_z(ptrue, tmp20_0, tmp21_0);
-        svfloat64_t tmp22_1 = svadd_z(ptrue, tmp20_1, tmp21_1);
+        __m512d tmp16_0 = _mm512_mul_pd(vll0, vrr0_0);
+        __m512d tmp16_1 = _mm512_mul_pd(vll0, vrr0_1);
+        __m512d tmp17_0 = _mm512_mul_pd(vll1, vrr1_0);
+        __m512d tmp17_1 = _mm512_mul_pd(vll1, vrr1_1);
+        __m512d tmp18_0 = _mm512_mul_pd(vll2, vrr2_0);
+        __m512d tmp18_1 = _mm512_mul_pd(vll2, vrr2_1);
+        __m512d tmp19_0 = _mm512_mul_pd(vll3, vrr3_0);
+        __m512d tmp19_1 = _mm512_mul_pd(vll3, vrr3_1);
+
+        __m512d tmp20_0 = _mm512_add_pd(tmp16_0, tmp17_0);
+        __m512d tmp20_1 = _mm512_add_pd(tmp16_1, tmp17_1);
+        __m512d tmp21_0 = _mm512_add_pd(tmp18_0, tmp19_0);
+        __m512d tmp21_1 = _mm512_add_pd(tmp18_1, tmp19_1);
+        __m512d tmp22_0 = _mm512_add_pd(tmp20_0, tmp21_0);
+        __m512d tmp22_1 = _mm512_add_pd(tmp20_1, tmp21_1);
 
         // grad = (a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4 ) * dot(ll, rr);
-        svfloat64_t vgard_0 = svmul_z(ptrue, tmp15_0, tmp22_0);
-        svfloat64_t vgard_1 = svmul_z(ptrue, tmp15_1, tmp22_1);
+        __m512d vgard_0 = _mm512_mul_pd(tmp15_0, tmp22_0);
+        __m512d vgard_1 = _mm512_mul_pd(tmp15_1, tmp22_1);
 
-        svfloat64_t vres0_0 = svmul_z(ptrue, vres_0, vrr0_0);
-        svfloat64_t vres0_1 = svmul_z(ptrue, vres_1, vrr0_1);
-        svfloat64_t vres1_0 = svmul_z(ptrue, vres_0, vrr1_0);
-        svfloat64_t vres1_1 = svmul_z(ptrue, vres_1, vrr1_1);
-        svfloat64_t vres2_0 = svmul_z(ptrue, vres_0, vrr2_0);
-        svfloat64_t vres2_1 = svmul_z(ptrue, vres_1, vrr2_1);
-        svfloat64_t vres3_0 = svmul_z(ptrue, vres_0, vrr3_0);
-        svfloat64_t vres3_1 = svmul_z(ptrue, vres_1, vrr3_1);
+        __m512d vres0_0 = _mm512_mul_pd(vres_0, vrr0_0);
+        __m512d vres0_1 = _mm512_mul_pd(vres_1, vrr0_1);
+        __m512d vres1_0 = _mm512_mul_pd(vres_0, vrr1_0);
+        __m512d vres1_1 = _mm512_mul_pd(vres_1, vrr1_1);
+        __m512d vres2_0 = _mm512_mul_pd(vres_0, vrr2_0);
+        __m512d vres2_1 = _mm512_mul_pd(vres_1, vrr2_1);
+        __m512d vres3_0 = _mm512_mul_pd(vres_0, vrr3_0);
+        __m512d vres3_1 = _mm512_mul_pd(vres_1, vrr3_1);
+
         if(unloop){
-          vgard_0 = svmul_z(ptrue, vgard_0, vnei_sub_jj);
-          vgard_1 = svmul_z(ptrue, vgard_1, vnei_sub_jj);
-          vres0_0 = svmul_z(ptrue, vres0_0, vnei_sub_jj);
-          vres0_1 = svmul_z(ptrue, vres0_1, vnei_sub_jj);
-          vres1_0 = svmul_z(ptrue, vres1_0, vnei_sub_jj);
-          vres1_1 = svmul_z(ptrue, vres1_1, vnei_sub_jj);
-          vres2_0 = svmul_z(ptrue, vres2_0, vnei_sub_jj);
-          vres2_1 = svmul_z(ptrue, vres2_1, vnei_sub_jj);
-          vres3_0 = svmul_z(ptrue, vres3_0, vnei_sub_jj);
-          vres3_1 = svmul_z(ptrue, vres3_1, vnei_sub_jj);
+          vgard_0 = _mm512_mul_pd(vgard_0, vnei_sub_jj);
+          vgard_1 = _mm512_mul_pd(vgard_1, vnei_sub_jj);
+          vres0_0 = _mm512_mul_pd(vres0_0, vnei_sub_jj);
+          vres0_1 = _mm512_mul_pd(vres0_1, vnei_sub_jj);
+          vres1_0 = _mm512_mul_pd(vres1_0, vnei_sub_jj);
+          vres1_1 = _mm512_mul_pd(vres1_1, vnei_sub_jj);
+          vres2_0 = _mm512_mul_pd(vres2_0, vnei_sub_jj);
+          vres2_1 = _mm512_mul_pd(vres2_1, vnei_sub_jj);
+          vres3_0 = _mm512_mul_pd(vres3_0, vnei_sub_jj);
+          vres3_1 = _mm512_mul_pd(vres3_1, vnei_sub_jj);
         }
-        vgard = svadd_z(ptrue, vgard, vgard_0);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_0);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_0);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_0);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_0);
-        vgard = svadd_z(ptrue, vgard, vgard_1);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_1);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_1);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_1);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_1);
+        vgard = _mm512_add_pd(vgard, vgard_0);
+        vdy_dem_0 = _mm512_add_pd(vdy_dem_0, vres0_0);
+        vdy_dem_1 = _mm512_add_pd(vdy_dem_1, vres1_0);
+        vdy_dem_2 = _mm512_add_pd(vdy_dem_2, vres2_0);
+        vdy_dem_3 = _mm512_add_pd(vdy_dem_3, vres3_0);
+        vgard = _mm512_add_pd(vgard, vgard_1);
+        vdy_dem_0 = _mm512_add_pd(vdy_dem_0, vres0_1);
+        vdy_dem_1 = _mm512_add_pd(vdy_dem_1, vres1_1);
+        vdy_dem_2 = _mm512_add_pd(vdy_dem_2, vres2_1);
+        vdy_dem_3 = _mm512_add_pd(vdy_dem_3, vres3_1);
       }
 
-      dy_dem_x[ii * _nnei + jj] = svaddv(ptrue, vgard);
-      dy_dem_tmp[0] = svaddv(ptrue, vdy_dem_0);
-      dy_dem_tmp[1] = svaddv(ptrue, vdy_dem_1);
-      dy_dem_tmp[2] = svaddv(ptrue, vdy_dem_2);
-      dy_dem_tmp[3] = svaddv(ptrue, vdy_dem_3);  
+      dy_dem_x[ii * _nnei + jj] = _mm512_reduce_add_pd(vgard);
+      dy_dem_tmp[0] = _mm512_reduce_add_pd(vdy_dem_0);
+      dy_dem_tmp[1] = _mm512_reduce_add_pd(vdy_dem_1);
+      dy_dem_tmp[2] = _mm512_reduce_add_pd(vdy_dem_2);
+      dy_dem_tmp[3] = _mm512_reduce_add_pd(vdy_dem_3);  
 
       if (unloop) break;
     }
   }
-  #endif
 }
 
 #else
@@ -2871,6 +2862,8 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
     FPTYPE *em, 
     FPTYPE *dy) {
 
+  // #ifdef __ARM_FEATURE_SVE
+  
   memset(dy_dem_x, 0.0, sizeof(float) * _loc * _nnei);
   memset(dy_dem, 0.0, sizeof(float) * _loc * _nnei * 4);
   float const lower   = c_table_info[0];
@@ -2891,21 +2884,7 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
     const float* dy3 = &dy[ii * last_layer_size * 4 + 3 * last_layer_size];
     bool unloop = false;
 
-    svbool_t ptrue = svptrue_b32();
-
-
-    // int do_prefetch = prefetch_flag;
-    // if(do_prefetch) {
-    //   for(int jj = 0; jj < PREFETCH_SIZE; jj++) {
-    //     FPTYPE xx = em_x[ii * _nnei + jj]; 
-    //     int n_table_idx = 0;
-    //     locate_xx(lower, upper, _max, stride0, stride1, xx, n_table_idx);        
-    //     const float* TABLE = &_table[n_table_idx * last_layer_size * 6];
-    //     for(int kk = 0; kk < last_layer_size * 6 / svcntw(); kk++){
-    //       svprfb_vnum(ptrue, TABLE, kk, SV_PLDL2STRM) ;
-    //     }
-    //   }
-    // }
+    // svbool_t ptrue = svptrue_b32();
 
     for (int jj = 0; jj < _nnei; jj++) {
       // construct the dy/dx
@@ -2920,184 +2899,176 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
       }
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
-
-      // if(do_prefetch) {
-      //   if(jj + PREFETCH_SIZE >= _nnei) do_prefetch = false;
-      //   xx_next = em_x[ii * _nnei + jj + PREFETCH_SIZE];
-      //   if(xx_next == ago) do_prefetch = false;
-      // }
-      // if(do_prefetch) {
-      //   int n_table_idx = 0;
-      //   locate_xx(lower, upper, _max, stride0, stride1, xx_next, n_table_idx);        
-      //   const float* TABLE = &_table[n_table_idx * last_layer_size * 6];
-      //   for(int kk = 0; kk < last_layer_size * 6 / svcntw(); kk++){
-      //     svprfb_vnum(ptrue, TABLE, kk, SV_PLDL2STRM) ;
-      //   }
-      // }
       
       float* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
 
-      svfloat32_t vgard = svdup_f32(0.f);
-      svfloat32_t vdy_dem_0 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_1 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_2 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_3 = svdup_f32(0.f);
+      __m512 vgard     = _mm512_setzero_ps();
+      __m512 vdy_dem_0 = _mm512_setzero_ps();
+      __m512 vdy_dem_1 = _mm512_setzero_ps();
+      __m512 vdy_dem_2 = _mm512_setzero_ps();
+      __m512 vdy_dem_3 = _mm512_setzero_ps();
 
-      assert(last_layer_size % svcntw() == 0);
+      // assert(last_layer_size % 16 == 0);
 
-      svfloat32_t vtwo = svdup_f32(2.f);
-      svfloat32_t vthree = svdup_f32(3.f);
-      svfloat32_t vfour = svdup_f32(4.f);
-      svfloat32_t vfive = svdup_f32(5.f);
+      __m512 vtwo   = _mm512_set1_ps(2.f);
+      __m512 vthree = _mm512_set1_ps(3.f);
+      __m512 vfour  = _mm512_set1_ps(4.f);
+      __m512 vfive  = _mm512_set1_ps(5.f);
 
-      svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
-      svfloat32_t vxx = svdup_f32(xx);
+      __m512 vnei_sub_jj = _mm512_set1_ps(float(_nnei - jj));
+      __m512 vxx = _mm512_set1_ps(xx);
 
-      svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat32_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
-      svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
-      svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
-      svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
-      svfloat32_t vll0 = svdup_f32(ll[0]);
-      svfloat32_t vll1 = svdup_f32(ll[1]);
-      svfloat32_t vll2 = svdup_f32(ll[2]);
-      svfloat32_t vll3 = svdup_f32(ll[3]);
-      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
-      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2){
-        svfloat32_t vrr0_0 = svld1(ptrue, dy0 + kk);
-        svfloat32_t vrr0_1 = svld1(ptrue, dy0 + kk + svcntw());
-        svfloat32_t vrr1_0 = svld1(ptrue, dy1 + kk);
-        svfloat32_t vrr1_1 = svld1(ptrue, dy1 + kk + svcntw());
-        svfloat32_t vrr2_0 = svld1(ptrue, dy2 + kk);
-        svfloat32_t vrr2_1 = svld1(ptrue, dy2 + kk + svcntw());
-        svfloat32_t vrr3_0 = svld1(ptrue, dy3 + kk);
-        svfloat32_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntw());
+       __m512 vxx2 = _mm512_mul_ps(vxx, vxx);
+      __m512 vxx3 = _mm512_mul_ps(vxx2, vxx);
+      __m512 vxx4 = _mm512_mul_ps(vxx2, vxx2);
+      __m512 vxx5 = _mm512_mul_ps(vxx3, vxx2);
+      __m512 v2xx1 = _mm512_mul_ps(vtwo, vxx);
+      __m512 v3xx2 = _mm512_mul_ps(vthree, vxx2);
+      __m512 v4xx3 = _mm512_mul_ps(vfour, vxx3);
+      __m512 v5xx4 = _mm512_mul_ps(vfive, vxx4);
+
+      __m512 vll0 = _mm512_set1_ps(ll[0]);
+      __m512 vll1 = _mm512_set1_ps(ll[1]);
+      __m512 vll2 = _mm512_set1_ps(ll[2]);
+      __m512 vll3 = _mm512_set1_ps(ll[3]);
+      __m512 vll0_ = _mm512_mul_ps(vll0, vnei_sub_jj);
+      __m512 vll1_ = _mm512_mul_ps(vll1, vnei_sub_jj);
+      __m512 vll2_ = _mm512_mul_ps(vll2, vnei_sub_jj);
+      __m512 vll3_ = _mm512_mul_ps(vll3, vnei_sub_jj);
+
+
+      for(int kk = 0; kk < last_layer_size; kk += 16 * 2){
+        __m512 vrr0_0 = _mm512_load_ps(dy0 + kk);
+        __m512 vrr0_1 = _mm512_load_ps(dy0 + kk + 16);
+        __m512 vrr1_0 = _mm512_load_ps(dy1 + kk);
+        __m512 vrr1_1 = _mm512_load_ps(dy1 + kk + 16);
+        __m512 vrr2_0 = _mm512_load_ps(dy2 + kk);
+        __m512 vrr2_1 = _mm512_load_ps(dy2 + kk + 16);
+        __m512 vrr3_0 = _mm512_load_ps(dy3 + kk);
+        __m512 vrr3_1 = _mm512_load_ps(dy3 + kk + 16);
 
         const float* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+        __m512 va0_0 = _mm512_load_ps(TABLE + 16 * 0);
+        __m512 va0_1 = _mm512_load_ps(TABLE + 16 * 1);
+        __m512 va1_0 = _mm512_load_ps(TABLE + 16 * 2);
+        __m512 va1_1 = _mm512_load_ps(TABLE + 16 * 3);
+        __m512 va2_0 = _mm512_load_ps(TABLE + 16 * 4);
+        __m512 va2_1 = _mm512_load_ps(TABLE + 16 * 5);
+        __m512 va3_0 = _mm512_load_ps(TABLE + 16 * 6);
+        __m512 va3_1 = _mm512_load_ps(TABLE + 16 * 7);
+        __m512 va4_0 = _mm512_load_ps(TABLE + 16 * 8);
+        __m512 va4_1 = _mm512_load_ps(TABLE + 16 * 9);
+        __m512 va5_0 = _mm512_load_ps(TABLE + 16 * 10);
+        __m512 va5_1 = _mm512_load_ps(TABLE + 16 * 11);
 
         // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
-        svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        __m512 tmp1_0 = _mm512_fmadd_ps(va1_0, vxx, va0_0);
+        __m512 tmp1_1 = _mm512_fmadd_ps(va1_1, vxx, va0_1);
 
-        svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        __m512 tmp2_0 = _mm512_mul_ps(va2_0, vxx2);
+        __m512 tmp2_1 = _mm512_mul_ps(va2_1, vxx2);
+        __m512 tmp3_0 = _mm512_mul_ps(va3_0, vxx3);
+        __m512 tmp3_1 = _mm512_mul_ps(va3_1, vxx3);
+        __m512 tmp4_0 = _mm512_mul_ps(va4_0, vxx4);
+        __m512 tmp4_1 = _mm512_mul_ps(va4_1, vxx4);
+        __m512 tmp5_0 = _mm512_mul_ps(va5_0, vxx5);
+        __m512 tmp5_1 = _mm512_mul_ps(va5_1, vxx5);
 
-        svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        __m512 tmp6_0 = _mm512_add_ps(tmp1_0, tmp2_0);
+        __m512 tmp6_1 = _mm512_add_ps(tmp1_1, tmp2_1);
+        __m512 tmp7_0 = _mm512_add_ps(tmp3_0, tmp4_0);
+        __m512 tmp7_1 = _mm512_add_ps(tmp3_1, tmp4_1);
+        __m512 tmp8_0 = _mm512_add_ps(tmp6_0, tmp5_0);
+        __m512 tmp8_1 = _mm512_add_ps(tmp6_1, tmp5_1);
 
-        svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        __m512 vres_0 = _mm512_add_ps(tmp8_0, tmp7_0);
+        __m512 vres_1 = _mm512_add_ps(tmp8_1, tmp7_1);
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
-        svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
-        svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+        __m512 tmp9_0 = _mm512_fmadd_ps(va2_0, v2xx1, va1_0);
+        __m512 tmp9_1 = _mm512_fmadd_ps(va2_1, v2xx1, va1_1);
 
-        svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
-        svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
-        svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
-        svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
-        svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
-        svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+        __m512 tmp10_0 = _mm512_mul_ps(va3_0, v3xx2);
+        __m512 tmp10_1 = _mm512_mul_ps(va3_1, v3xx2);
+        __m512 tmp11_0 = _mm512_mul_ps(va4_0, v4xx3);
+        __m512 tmp11_1 = _mm512_mul_ps(va4_1, v4xx3);
+        __m512 tmp12_0 = _mm512_mul_ps(va5_0, v5xx4);
+        __m512 tmp12_1 = _mm512_mul_ps(va5_1, v5xx4);
 
-        svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
-        svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
-        svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
-        svfloat32_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
-        svfloat32_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
-        svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+        __m512 tmp13_0 = _mm512_add_ps(tmp9_0, tmp10_0);
+        __m512 tmp13_1 = _mm512_add_ps(tmp9_1, tmp10_1);
+        __m512 tmp14_0 = _mm512_add_ps(tmp11_0, tmp12_0);
+        __m512 tmp14_1 = _mm512_add_ps(tmp11_1, tmp12_1);
+        __m512 tmp15_0 = _mm512_add_ps(tmp13_0, tmp14_0); 
+        __m512 tmp15_1 = _mm512_add_ps(tmp13_1, tmp14_1); 
 
         // dot(ll, rr);
-        svfloat32_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);
-        svfloat32_t tmp16_1 = svmul_z(ptrue, vll0, vrr0_1);
-        svfloat32_t tmp17_0 = svmul_z(ptrue, vll1, vrr1_0);
-        svfloat32_t tmp17_1 = svmul_z(ptrue, vll1, vrr1_1);
-        svfloat32_t tmp18_0 = svmul_z(ptrue, vll2, vrr2_0);
-        svfloat32_t tmp18_1 = svmul_z(ptrue, vll2, vrr2_1);
-        svfloat32_t tmp19_0 = svmul_z(ptrue, vll3, vrr3_0);
-        svfloat32_t tmp19_1 = svmul_z(ptrue, vll3, vrr3_1);
-        
-        svfloat32_t tmp20_0 = svadd_z(ptrue, tmp16_0, tmp17_0);
-        svfloat32_t tmp20_1 = svadd_z(ptrue, tmp16_1, tmp17_1);
-        svfloat32_t tmp21_0 = svadd_z(ptrue, tmp18_0, tmp19_0);
-        svfloat32_t tmp21_1 = svadd_z(ptrue, tmp18_1, tmp19_1);
-        svfloat32_t tmp22_0 = svadd_z(ptrue, tmp20_0, tmp21_0);
-        svfloat32_t tmp22_1 = svadd_z(ptrue, tmp20_1, tmp21_1);
+        __m512 tmp16_0 = _mm512_mul_ps(vll0, vrr0_0);
+        __m512 tmp16_1 = _mm512_mul_ps(vll0, vrr0_1);
+        __m512 tmp17_0 = _mm512_mul_ps(vll1, vrr1_0);
+        __m512 tmp17_1 = _mm512_mul_ps(vll1, vrr1_1);
+        __m512 tmp18_0 = _mm512_mul_ps(vll2, vrr2_0);
+        __m512 tmp18_1 = _mm512_mul_ps(vll2, vrr2_1);
+        __m512 tmp19_0 = _mm512_mul_ps(vll3, vrr3_0);
+        __m512 tmp19_1 = _mm512_mul_ps(vll3, vrr3_1);
+
+        __m512 tmp20_0 = _mm512_add_ps(tmp16_0, tmp17_0);
+        __m512 tmp20_1 = _mm512_add_ps(tmp16_1, tmp17_1);
+        __m512 tmp21_0 = _mm512_add_ps(tmp18_0, tmp19_0);
+        __m512 tmp21_1 = _mm512_add_ps(tmp18_1, tmp19_1);
+        __m512 tmp22_0 = _mm512_add_ps(tmp20_0, tmp21_0);
+        __m512 tmp22_1 = _mm512_add_ps(tmp20_1, tmp21_1);
 
         // grad = (a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4 ) * dot(ll, rr);
-        svfloat32_t vgard_0 = svmul_z(ptrue, tmp15_0, tmp22_0);
-        svfloat32_t vgard_1 = svmul_z(ptrue, tmp15_1, tmp22_1);
+        __m512 vgard_0 = _mm512_mul_ps(tmp15_0, tmp22_0);
+        __m512 vgard_1 = _mm512_mul_ps(tmp15_1, tmp22_1);
 
-        svfloat32_t vres0_0 = svmul_z(ptrue, vres_0, vrr0_0);
-        svfloat32_t vres0_1 = svmul_z(ptrue, vres_1, vrr0_1);
-        svfloat32_t vres1_0 = svmul_z(ptrue, vres_0, vrr1_0);
-        svfloat32_t vres1_1 = svmul_z(ptrue, vres_1, vrr1_1);
-        svfloat32_t vres2_0 = svmul_z(ptrue, vres_0, vrr2_0);
-        svfloat32_t vres2_1 = svmul_z(ptrue, vres_1, vrr2_1);
-        svfloat32_t vres3_0 = svmul_z(ptrue, vres_0, vrr3_0);
-        svfloat32_t vres3_1 = svmul_z(ptrue, vres_1, vrr3_1);
+        __m512 vres0_0 = _mm512_mul_ps(vres_0, vrr0_0);
+        __m512 vres0_1 = _mm512_mul_ps(vres_1, vrr0_1);
+        __m512 vres1_0 = _mm512_mul_ps(vres_0, vrr1_0);
+        __m512 vres1_1 = _mm512_mul_ps(vres_1, vrr1_1);
+        __m512 vres2_0 = _mm512_mul_ps(vres_0, vrr2_0);
+        __m512 vres2_1 = _mm512_mul_ps(vres_1, vrr2_1);
+        __m512 vres3_0 = _mm512_mul_ps(vres_0, vrr3_0);
+        __m512 vres3_1 = _mm512_mul_ps(vres_1, vrr3_1);
         if(unloop){
-          vgard_0 = svmul_z(ptrue, vgard_0, vnei_sub_jj);
-          vgard_1 = svmul_z(ptrue, vgard_1, vnei_sub_jj);
-          vres0_0 = svmul_z(ptrue, vres0_0, vnei_sub_jj);
-          vres0_1 = svmul_z(ptrue, vres0_1, vnei_sub_jj);
-          vres1_0 = svmul_z(ptrue, vres1_0, vnei_sub_jj);
-          vres1_1 = svmul_z(ptrue, vres1_1, vnei_sub_jj);
-          vres2_0 = svmul_z(ptrue, vres2_0, vnei_sub_jj);
-          vres2_1 = svmul_z(ptrue, vres2_1, vnei_sub_jj);
-          vres3_0 = svmul_z(ptrue, vres3_0, vnei_sub_jj);
-          vres3_1 = svmul_z(ptrue, vres3_1, vnei_sub_jj);
+          vgard_0 = _mm512_mul_ps(vgard_0, vnei_sub_jj);
+          vgard_1 = _mm512_mul_ps(vgard_1, vnei_sub_jj);
+          vres0_0 = _mm512_mul_ps(vres0_0, vnei_sub_jj);
+          vres0_1 = _mm512_mul_ps(vres0_1, vnei_sub_jj);
+          vres1_0 = _mm512_mul_ps(vres1_0, vnei_sub_jj);
+          vres1_1 = _mm512_mul_ps(vres1_1, vnei_sub_jj);
+          vres2_0 = _mm512_mul_ps(vres2_0, vnei_sub_jj);
+          vres2_1 = _mm512_mul_ps(vres2_1, vnei_sub_jj);
+          vres3_0 = _mm512_mul_ps(vres3_0, vnei_sub_jj);
+          vres3_1 = _mm512_mul_ps(vres3_1, vnei_sub_jj);
         }
-        vgard = svadd_z(ptrue, vgard, vgard_0);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_0);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_0);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_0);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_0);
-        vgard = svadd_z(ptrue, vgard, vgard_1);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_1);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_1);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_1);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_1);
+        vgard = _mm512_add_ps(vgard, vgard_0);
+        vdy_dem_0 = _mm512_add_ps(vdy_dem_0, vres0_0);
+        vdy_dem_1 = _mm512_add_ps(vdy_dem_1, vres1_0);
+        vdy_dem_2 = _mm512_add_ps(vdy_dem_2, vres2_0);
+        vdy_dem_3 = _mm512_add_ps(vdy_dem_3, vres3_0);
+        vgard = _mm512_add_ps(vgard, vgard_1);
+        vdy_dem_0 = _mm512_add_ps(vdy_dem_0, vres0_1);
+        vdy_dem_1 = _mm512_add_ps(vdy_dem_1, vres1_1);
+        vdy_dem_2 = _mm512_add_ps(vdy_dem_2, vres2_1);
+        vdy_dem_3 = _mm512_add_ps(vdy_dem_3, vres3_1);
       }
 
-      dy_dem_x[ii * _nnei + jj] = svaddv(ptrue, vgard);
-      dy_dem_tmp[0] = svaddv(ptrue, vdy_dem_0);
-      dy_dem_tmp[1] = svaddv(ptrue, vdy_dem_1);
-      dy_dem_tmp[2] = svaddv(ptrue, vdy_dem_2);
-      dy_dem_tmp[3] = svaddv(ptrue, vdy_dem_3);  
+      dy_dem_x[ii * _nnei + jj] = _mm512_reduce_add_ps(vgard);
+      dy_dem_tmp[0] = _mm512_reduce_add_ps(vdy_dem_0);
+      dy_dem_tmp[1] = _mm512_reduce_add_ps(vdy_dem_1);
+      dy_dem_tmp[2] = _mm512_reduce_add_ps(vdy_dem_2);
+      dy_dem_tmp[3] = _mm512_reduce_add_ps(vdy_dem_3);  
 
       if (unloop) break;
     }
-  }   
+  }  
+
+  // #endif 
 }
 #endif
+
 
 inline void make_index_range (
     int & idx_start,
@@ -3393,90 +3364,26 @@ void DeepPot::prod_virial_a_cpu(
 
 #endif
 
+
 void DeepPot::tabulateFusion_v1_sve(int _loc,
   int _nnei,
   FPTYPE* &em_x,
   FPTYPE* &em,
   FPTYPE *out,
   const FPTYPE* _table) {
-
+  
   const FPTYPE lower   = c_table_info[0];
   const FPTYPE upper   = c_table_info[1];
   const FPTYPE _max    = c_table_info[2];
   const FPTYPE stride0 = c_table_info[3];
   const FPTYPE stride1 = c_table_info[4];
 
-#ifndef HIGH_PREC
   // for every atom, execute a small manual gemm ~
   // FPTYPE * res = new FPTYPE[4 * last_layer_size];
   // #pragma omp parallel for
 
-  #if 0
-  for (int ii = 0; ii < _loc; ii++) { // 对loc atom 遍历
-    FPTYPE ll[4] = {0};
-    FPTYPE ago = em_x[ii * _nnei + _nnei - 1]; // 拿到最后一个邻居
-    bool unloop = false; 
-
-    FPTYPE* out0 = out + ii * last_layer_size * 4 + 0 * last_layer_size;
-    FPTYPE* out1 = out + ii * last_layer_size * 4 + 1 * last_layer_size;
-    FPTYPE* out2 = out + ii * last_layer_size * 4 + 2 * last_layer_size;
-    FPTYPE* out3 = out + ii * last_layer_size * 4 + 3 * last_layer_size; // 输出的指针
-
-    for (int jj = 0; jj < _nnei; jj++) {  // 对所有邻居遍历
-      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
-      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
-      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
-      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
-      FPTYPE xx = em_x[ii * _nnei + jj];  // sij
-      if (ago == xx) { // 是空
-        unloop = true;
-      }
-      int table_idx = 0;
-      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
-
-      // assert(table_idx < 136000);
-
-      for (int kbs = 0; kbs < last_layer_size; kbs+=TABLE_STEP) {
-        int kbe = kbs + TABLE_STEP;
-        const FPTYPE *table0 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 0];
-        const FPTYPE *table1 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 1];
-        // const FPTYPE *table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
-        // const FPTYPE *table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
-        // const FPTYPE *table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
-        // const FPTYPE *table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
-        for (int kk = kbs; kk < kbe; kk++) {
-          FPTYPE a0  = table0[kk-kbs]; 
-          FPTYPE a1  = table1[kk-kbs]; 
-          // FPTYPE a2  = table2[kk-kbs]; 
-          // FPTYPE a3  = table3[kk-kbs];
-          // FPTYPE a4  = table4[kk-kbs];
-          // FPTYPE a5  = table5[kk-kbs];
-          // FPTYPE var = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx; // 128 次 多项式拟合
-          FPTYPE var = a0 + a1 * xx;
-
-          if (unloop) {
-            out0[kk] += (_nnei - jj) * var * ll[0];
-            out1[kk] += (_nnei - jj) * var * ll[1];
-            out2[kk] += (_nnei - jj) * var * ll[2];
-            out3[kk] += (_nnei - jj) * var * ll[3];
-          }
-          else {
-            out0[kk] += var * ll[0];
-            out1[kk] += var * ll[1];
-            out2[kk] += var * ll[2];
-            out3[kk] += var * ll[3];
-          }
-        }
-      }
-
-      if (unloop) break;
-    }
-  }
-
-  #else
-
   for (int ii = 0; ii < _loc; ii++) {
-    svbool_t ptrue = svptrue_b32();
+    // svbool_t ptrue = svptrue_b32();
 
     FPTYPE ll[4] = {0};
     FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
@@ -3501,104 +3408,101 @@ void DeepPot::tabulateFusion_v1_sve(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
-      assert(last_layer_size % svcntw() == 0);
+      assert(last_layer_size % 16 == 0);
 
-      svfloat32_t vnei_sub_jj = svdup_f32((float(_nnei - jj)));
-      svfloat32_t vxx = svdup_f32(xx);
-      // svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      // svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      // svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      // svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat32_t vll0 = svdup_f32(ll[0]);
-      svfloat32_t vll1 = svdup_f32(ll[1]);
-      svfloat32_t vll2 = svdup_f32(ll[2]);
-      svfloat32_t vll3 = svdup_f32(ll[3]);
-      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
+      __m512 vnei_sub_jj = _mm512_set1_ps(FPTYPE(_nnei - jj));
+      __m512 vxx = _mm512_set1_ps(xx);
+      // __m512 vxx2 = svmul_z(ptrue, vxx, vxx);
+      // __m512 vxx3 = svmul_z(ptrue, vxx2, vxx);
+      // __m512 vxx4 = svmul_z(ptrue, vxx2, vxx2);
+      // __m512 vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      __m512 vll0 = _mm512_set1_ps(ll[0]);
+      __m512 vll1 = _mm512_set1_ps(ll[1]);
+      __m512 vll2 = _mm512_set1_ps(ll[2]);
+      __m512 vll3 = _mm512_set1_ps(ll[3]);
+      __m512 vll0_ = _mm512_mul_ps(vll0, vnei_sub_jj);
+      __m512 vll1_ = _mm512_mul_ps(vll1, vnei_sub_jj);
+      __m512 vll2_ = _mm512_mul_ps(vll2, vnei_sub_jj);
+      __m512 vll3_ = _mm512_mul_ps(vll3, vnei_sub_jj);
 
-      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2) {
-        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kk * TABLE_STRIDE_V1];
-        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        // svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        // svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        // svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        // svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        // svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        // svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        // svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        // svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11); 
 
-        // svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        // svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
-        // svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        // svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        // svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        // svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        // svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        // svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        // svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        // svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
-        // svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        // svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        // svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        // svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        // svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        // svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
-        // svfloat32_t vvar_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        // svfloat32_t vvar_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+      for(int kk = 0; kk < last_layer_size; kk += 16 * 2){
+        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * 2 + kk * 2];
+        __m512 va0_0 = _mm512_load_ps(TABLE + 16 * 0);
+        __m512 va0_1 = _mm512_load_ps(TABLE + 16 * 1);
+        __m512 va1_0 = _mm512_load_ps(TABLE + 16 * 2);
+        __m512 va1_1 = _mm512_load_ps(TABLE + 16 * 3);
+        // __m512 va2_0 = svld1_vnum(ptrue, TABLE, 4);
+        // __m512 va2_1 = svld1_vnum(ptrue, TABLE, 5);
+        // __m512 va3_0 = svld1_vnum(ptrue, TABLE, 6);
+        // __m512 va3_1 = svld1_vnum(ptrue, TABLE, 7);
+        // __m512 va4_0 = svld1_vnum(ptrue, TABLE, 8);
+        // __m512 va4_1 = svld1_vnum(ptrue, TABLE, 9);
+        // __m512 va5_0 = svld1_vnum(ptrue, TABLE, 10);
+        // __m512 va5_1 = svld1_vnum(ptrue, TABLE, 11); 
 
-        svfloat32_t vvar_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat32_t vvar_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // __m512 tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        // __m512 tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // __m512 tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
+        // __m512 tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
+        // __m512 tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
+        // __m512 tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
+        // __m512 tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
+        // __m512 tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
+        // __m512 tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
+        // __m512 tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        // __m512 tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
+        // __m512 tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
+        // __m512 tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
+        // __m512 tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
+        // __m512 tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
+        // __m512 tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        // __m512 vvar_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
+        // __m512 vvar_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
 
-        svfloat32_t vout0_0 = svld1(ptrue, out0 + kk);
-        svfloat32_t vout0_1 = svld1(ptrue, out0 + kk + svcntw());
-        svfloat32_t vout1_0 = svld1(ptrue, out1 + kk);
-        svfloat32_t vout1_1 = svld1(ptrue, out1 + kk + svcntw());
-        svfloat32_t vout2_0 = svld1(ptrue, out2 + kk);
-        svfloat32_t vout2_1 = svld1(ptrue, out2 + kk + svcntw());
-        svfloat32_t vout3_0 = svld1(ptrue, out3 + kk);
-        svfloat32_t vout3_1 = svld1(ptrue, out3 + kk + svcntw());
+        __m512 vvar_0 = _mm512_fmadd_ps(va1_0, vxx, va0_0);
+        __m512 vvar_1 = _mm512_fmadd_ps(va1_1, vxx, va0_1);
+
+        __m512 vout0_0 = _mm512_load_ps(out0 + kk);
+        __m512 vout0_1 = _mm512_load_ps(out0 + kk + 16);
+        __m512 vout1_0 = _mm512_load_ps(out1 + kk);
+        __m512 vout1_1 = _mm512_load_ps(out1 + kk + 16);
+        __m512 vout2_0 = _mm512_load_ps(out2 + kk);
+        __m512 vout2_1 = _mm512_load_ps(out2 + kk + 16);
+        __m512 vout3_0 = _mm512_load_ps(out3 + kk);
+        __m512 vout3_1 = _mm512_load_ps(out3 + kk + 16);
 
         if(unloop){
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1_);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1_);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2_);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2_);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3_);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3_);
+          vout0_0 = _mm512_fmadd_ps(vvar_0, vll0_, vout0_0);
+          vout0_1 = _mm512_fmadd_ps(vvar_1, vll0_, vout0_1);
+          vout1_0 = _mm512_fmadd_ps(vvar_0, vll1_, vout1_0);
+          vout1_1 = _mm512_fmadd_ps(vvar_1, vll1_, vout1_1);
+          vout2_0 = _mm512_fmadd_ps(vvar_0, vll2_, vout2_0);
+          vout2_1 = _mm512_fmadd_ps(vvar_1, vll2_, vout2_1);
+          vout3_0 = _mm512_fmadd_ps(vvar_0, vll3_, vout3_0);
+          vout3_1 = _mm512_fmadd_ps(vvar_1, vll3_, vout3_1);
         }else{
-          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0);
-          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0);
-          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1);
-          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1);
-          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2);
-          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2);
-          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3);
-          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3);
+          vout0_0 = _mm512_fmadd_ps(vvar_0, vll0, vout0_0);
+          vout0_1 = _mm512_fmadd_ps(vvar_1, vll0, vout0_1);
+          vout1_0 = _mm512_fmadd_ps(vvar_0, vll1, vout1_0);
+          vout1_1 = _mm512_fmadd_ps(vvar_1, vll1, vout1_1);
+          vout2_0 = _mm512_fmadd_ps(vvar_0, vll2, vout2_0);
+          vout2_1 = _mm512_fmadd_ps(vvar_1, vll2, vout2_1);
+          vout3_0 = _mm512_fmadd_ps(vvar_0, vll3, vout3_0);
+          vout3_1 = _mm512_fmadd_ps(vvar_1, vll3, vout3_1);
         }
-        svst1(ptrue, out0 + kk, vout0_0);
-        svst1(ptrue, out0 + kk + svcntw(), vout0_1);
-        svst1(ptrue, out1 + kk, vout1_0);
-        svst1(ptrue, out1 + kk + svcntw(), vout1_1);
-        svst1(ptrue, out2 + kk, vout2_0);
-        svst1(ptrue, out2 + kk + svcntw(), vout2_1);
-        svst1(ptrue, out3 + kk, vout3_0);
-        svst1(ptrue, out3 + kk + svcntw(), vout3_1);
+        _mm512_store_ps(out0 + kk, vout0_0);
+        _mm512_store_ps(out0 + kk + 16, vout0_1);
+        _mm512_store_ps(out1 + kk, vout1_0);
+        _mm512_store_ps(out1 + kk + 16, vout1_1);
+        _mm512_store_ps(out2 + kk, vout2_0);
+        _mm512_store_ps(out2 + kk + 16, vout2_1);
+        _mm512_store_ps(out3 + kk, vout3_0);
+        _mm512_store_ps(out3 + kk + 16, vout3_1);
       }
       if (unloop) break;
     }
   }
-
-  #endif
-  #endif
-
 }
 
 
@@ -3611,7 +3515,8 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
     FPTYPE *em, 
     FPTYPE *dy) {
 
-#ifndef HIGH_PREC
+  // #ifdef __ARM_FEATURE_SVE
+  
   memset(dy_dem_x, 0.0, sizeof(FPTYPE) * _loc * _nnei);
   memset(dy_dem, 0.0, sizeof(FPTYPE) * _loc * _nnei * 4);
   FPTYPE const lower   = c_table_info[0];
@@ -3619,92 +3524,6 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
   FPTYPE const _max    = c_table_info[2];
   FPTYPE const stride0 = c_table_info[3];
   FPTYPE const stride1 = c_table_info[4];
-
-
-  #if 0 
-
-  for (int ii = 0; ii < _loc; ii++) {
-    FPTYPE ll[4];
-    FPTYPE rr[4];
-    FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
-    const FPTYPE* dy0 = &dy[ii * last_layer_size * 4 + 0 * last_layer_size];
-    const FPTYPE* dy1 = &dy[ii * last_layer_size * 4 + 1 * last_layer_size];
-    const FPTYPE* dy2 = &dy[ii * last_layer_size * 4 + 2 * last_layer_size];
-    const FPTYPE* dy3 = &dy[ii * last_layer_size * 4 + 3 * last_layer_size];
-    bool unloop = false;
-    for (int jj = 0; jj < _nnei; jj++) {
-      // construct the dy/dx
-      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
-      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
-      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
-      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
-      FPTYPE xx = em_x[ii * _nnei + jj]; 
-      if (ago == xx) {
-        unloop = true;
-      }
-      int table_idx = 0;
-      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
-
-      assert(table_idx < 136000);
-
-      FPTYPE* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
-
-      FPTYPE grad = 0.0;
-      FPTYPE dy_dem_0 = 0.0;
-      FPTYPE dy_dem_1 = 0.0;
-      FPTYPE dy_dem_2 = 0.0;
-      FPTYPE dy_dem_3 = 0.0;
-
-      for (int kbs = 0; kbs < last_layer_size; kbs += TABLE_STEP){
-        int kbe = kbs + TABLE_STEP;
-        const FPTYPE *table0 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 0];
-        const FPTYPE *table1 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 1];
-        // const FPTYPE* table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
-        // const FPTYPE* table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
-        // const FPTYPE* table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
-        // const FPTYPE* table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
-        for (int kk = kbs; kk < kbe; kk++) {
-          rr[0] = dy0[kk];
-          rr[1] = dy1[kk];
-          rr[2] = dy2[kk];
-          rr[3] = dy3[kk];
-          FPTYPE a0  = table0[kk-kbs]; 
-          FPTYPE a1  = table1[kk-kbs]; 
-          // FPTYPE a2  = table2[kk-kbs]; 
-          // FPTYPE a3  = table3[kk-kbs];
-          // FPTYPE a4  = table4[kk-kbs];
-          // FPTYPE a5  = table5[kk-kbs];
-          // FPTYPE res = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx;
-          FPTYPE res = a0 + a1  * xx;
-
-          if (unloop) {
-            grad += (a1) * dot(ll, rr) * (_nnei - jj);
-            dy_dem_0 += res * rr[0] * (_nnei - jj);
-            dy_dem_1 += res * rr[1] * (_nnei - jj);
-            dy_dem_2 += res * rr[2] * (_nnei - jj);
-            dy_dem_3 += res * rr[3] * (_nnei - jj);
-          }
-          else {
-            grad += (a1 ) * dot(ll, rr);
-            dy_dem_0 += res * rr[0];
-            dy_dem_1 += res * rr[1];
-            dy_dem_2 += res * rr[2];
-            dy_dem_3 += res * rr[3];
-          }
-        }
-      }
-
-      dy_dem_x[ii * _nnei + jj] = grad;
-      dy_dem_tmp[0] = dy_dem_0;
-      dy_dem_tmp[1] = dy_dem_1;
-      dy_dem_tmp[2] = dy_dem_2;
-      dy_dem_tmp[3] = dy_dem_3;
-
-      if (unloop) break;
-    }
-  }
-
-  #else 
   // for every atom, execute a small gemm~
   // float * res = new float[4 * last_layer_size];
   // #pragma omp parallel for
@@ -3718,7 +3537,7 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
     const FPTYPE* dy3 = &dy[ii * last_layer_size * 4 + 3 * last_layer_size];
     bool unloop = false;
 
-    svbool_t ptrue = svptrue_b32();
+    // svbool_t ptrue = svptrue_b32();
 
     for (int jj = 0; jj < _nnei; jj++) {
       // construct the dy/dx
@@ -3736,21 +3555,21 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
       
       FPTYPE* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
 
-      svfloat32_t vgard = svdup_f32(0.f);
-      svfloat32_t vdy_dem_0 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_1 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_2 = svdup_f32(0.f);
-      svfloat32_t vdy_dem_3 = svdup_f32(0.f);
+      __m512 vgard     = _mm512_setzero_ps();
+      __m512 vdy_dem_0 = _mm512_setzero_ps();
+      __m512 vdy_dem_1 = _mm512_setzero_ps();
+      __m512 vdy_dem_2 = _mm512_setzero_ps();
+      __m512 vdy_dem_3 = _mm512_setzero_ps();
 
-      // assert(last_layer_size % svcntw() == 0);
+      assert(last_layer_size % 16 == 0);
 
       // svfloat32_t vtwo = svdup_f32(2.f);
       // svfloat32_t vthree = svdup_f32(3.f);
       // svfloat32_t vfour = svdup_f32(4.f);
       // svfloat32_t vfive = svdup_f32(5.f);
 
-      svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
-      svfloat32_t vxx = svdup_f32(xx);
+      __m512 vnei_sub_jj = _mm512_set1_ps(float(_nnei - jj));
+      __m512 vxx = _mm512_set1_ps(xx);
 
       // svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
       // svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
@@ -3760,29 +3579,29 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
       // svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
       // svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
       // svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
-      svfloat32_t vll0 = svdup_f32(ll[0]);
-      svfloat32_t vll1 = svdup_f32(ll[1]);
-      svfloat32_t vll2 = svdup_f32(ll[2]);
-      svfloat32_t vll3 = svdup_f32(ll[3]);
-      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
-      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
-      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
-      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
-      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2) {
-        svfloat32_t vrr0_0 = svld1(ptrue, dy0 + kk);
-        svfloat32_t vrr0_1 = svld1(ptrue, dy0 + kk + svcntw());
-        svfloat32_t vrr1_0 = svld1(ptrue, dy1 + kk);
-        svfloat32_t vrr1_1 = svld1(ptrue, dy1 + kk + svcntw());
-        svfloat32_t vrr2_0 = svld1(ptrue, dy2 + kk);
-        svfloat32_t vrr2_1 = svld1(ptrue, dy2 + kk + svcntw());
-        svfloat32_t vrr3_0 = svld1(ptrue, dy3 + kk);
-        svfloat32_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntw());
+      __m512 vll0 = _mm512_set1_ps(ll[0]);
+      __m512 vll1 = _mm512_set1_ps(ll[1]);
+      __m512 vll2 = _mm512_set1_ps(ll[2]);
+      __m512 vll3 = _mm512_set1_ps(ll[3]);
+      __m512 vll0_ = _mm512_mul_ps(vll0, vnei_sub_jj);
+      __m512 vll1_ = _mm512_mul_ps(vll1, vnei_sub_jj);
+      __m512 vll2_ = _mm512_mul_ps(vll2, vnei_sub_jj);
+      __m512 vll3_ = _mm512_mul_ps(vll3, vnei_sub_jj);
+      for(int kk = 0; kk < last_layer_size; kk += 16 * 2) {
+        __m512 vrr0_0 = _mm512_load_ps(dy0 + kk);
+        __m512 vrr0_1 = _mm512_load_ps(dy0 + kk + 16);
+        __m512 vrr1_0 = _mm512_load_ps(dy1 + kk);
+        __m512 vrr1_1 = _mm512_load_ps(dy1 + kk + 16);
+        __m512 vrr2_0 = _mm512_load_ps(dy2 + kk);
+        __m512 vrr2_1 = _mm512_load_ps(dy2 + kk + 16);
+        __m512 vrr3_0 = _mm512_load_ps(dy3 + kk);
+        __m512 vrr3_1 = _mm512_load_ps(dy3 + kk + 16);
 
-        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kk * TABLE_STRIDE_V1];
-        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
+        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * 2 + kk * 2];
+        __m512 va0_0 = _mm512_load_ps(TABLE + 16 * 0);
+        __m512 va0_1 = _mm512_load_ps(TABLE + 16 * 1);
+        __m512 va1_0 = _mm512_load_ps(TABLE + 16 * 2);
+        __m512 va1_1 = _mm512_load_ps(TABLE + 16 * 3);
         // svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
         // svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
         // svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
@@ -3812,8 +3631,8 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
         // svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
         // svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
 
-        svfloat32_t vres_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat32_t vres_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        __m512 vres_0 = _mm512_fmadd_ps(vxx, va0_0, va1_0);
+        __m512 vres_1 = _mm512_fmadd_ps(vxx, va0_1, va1_1);
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
         // svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
@@ -3832,68 +3651,68 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
         // svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
 
         // dot(ll, rr);
-        svfloat32_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);
-        svfloat32_t tmp16_1 = svmul_z(ptrue, vll0, vrr0_1);
-        svfloat32_t tmp17_0 = svmul_z(ptrue, vll1, vrr1_0);
-        svfloat32_t tmp17_1 = svmul_z(ptrue, vll1, vrr1_1);
-        svfloat32_t tmp18_0 = svmul_z(ptrue, vll2, vrr2_0);
-        svfloat32_t tmp18_1 = svmul_z(ptrue, vll2, vrr2_1);
-        svfloat32_t tmp19_0 = svmul_z(ptrue, vll3, vrr3_0);
-        svfloat32_t tmp19_1 = svmul_z(ptrue, vll3, vrr3_1);
-        svfloat32_t tmp20_0 = svadd_z(ptrue, tmp16_0, tmp17_0);
-        svfloat32_t tmp20_1 = svadd_z(ptrue, tmp16_1, tmp17_1);
-        svfloat32_t tmp21_0 = svadd_z(ptrue, tmp18_0, tmp19_0);
-        svfloat32_t tmp21_1 = svadd_z(ptrue, tmp18_1, tmp19_1);
-        svfloat32_t tmp22_0 = svadd_z(ptrue, tmp20_0, tmp21_0);
-        svfloat32_t tmp22_1 = svadd_z(ptrue, tmp20_1, tmp21_1);
+        __m512 tmp16_0 = _mm512_mul_ps(vll0, vrr0_0);
+        __m512 tmp16_1 = _mm512_mul_ps(vll0, vrr0_1);
+        __m512 tmp17_0 = _mm512_mul_ps(vll1, vrr1_0);
+        __m512 tmp17_1 = _mm512_mul_ps(vll1, vrr1_1);
+        __m512 tmp18_0 = _mm512_mul_ps(vll2, vrr2_0);
+        __m512 tmp18_1 = _mm512_mul_ps(vll2, vrr2_1);
+        __m512 tmp19_0 = _mm512_mul_ps(vll3, vrr3_0);
+        __m512 tmp19_1 = _mm512_mul_ps(vll3, vrr3_1);
+        __m512 tmp20_0 = _mm512_add_ps(tmp16_0, tmp17_0);
+        __m512 tmp20_1 = _mm512_add_ps(tmp16_1, tmp17_1);
+        __m512 tmp21_0 = _mm512_add_ps(tmp18_0, tmp19_0);
+        __m512 tmp21_1 = _mm512_add_ps(tmp18_1, tmp19_1);
+        __m512 tmp22_0 = _mm512_add_ps(tmp20_0, tmp21_0);
+        __m512 tmp22_1 = _mm512_add_ps(tmp20_1, tmp21_1);
 
         // grad = (a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4 ) * dot(ll, rr);
         // svfloat32_t vgard_0 = svmul_z(ptrue, tmp15_0, tmp22_0);
         // svfloat32_t vgard_1 = svmul_z(ptrue, tmp15_1, tmp22_1);
-        svfloat32_t vgard_0 = svmul_z(ptrue, va1_0, tmp22_0);
-        svfloat32_t vgard_1 = svmul_z(ptrue, va1_1, tmp22_1);
+        __m512 vgard_0 = _mm512_mul_ps(va1_0, tmp22_0);
+        __m512 vgard_1 = _mm512_mul_ps(va1_1, tmp22_1);
 
-        svfloat32_t vres0_0 = svmul_z(ptrue, vres_0, vrr0_0);
-        svfloat32_t vres0_1 = svmul_z(ptrue, vres_1, vrr0_1);
-        svfloat32_t vres1_0 = svmul_z(ptrue, vres_0, vrr1_0);
-        svfloat32_t vres1_1 = svmul_z(ptrue, vres_1, vrr1_1);
-        svfloat32_t vres2_0 = svmul_z(ptrue, vres_0, vrr2_0);
-        svfloat32_t vres2_1 = svmul_z(ptrue, vres_1, vrr2_1);
-        svfloat32_t vres3_0 = svmul_z(ptrue, vres_0, vrr3_0);
-        svfloat32_t vres3_1 = svmul_z(ptrue, vres_1, vrr3_1);
+        __m512 vres0_0 = _mm512_mul_ps(vres_0, vrr0_0);
+        __m512 vres0_1 = _mm512_mul_ps(vres_1, vrr0_1);
+        __m512 vres1_0 = _mm512_mul_ps(vres_0, vrr1_0);
+        __m512 vres1_1 = _mm512_mul_ps(vres_1, vrr1_1);
+        __m512 vres2_0 = _mm512_mul_ps(vres_0, vrr2_0);
+        __m512 vres2_1 = _mm512_mul_ps(vres_1, vrr2_1);
+        __m512 vres3_0 = _mm512_mul_ps(vres_0, vrr3_0);
+        __m512 vres3_1 = _mm512_mul_ps(vres_1, vrr3_1);
         if(unloop){
-          vgard_0 = svmul_z(ptrue, vgard_0, vnei_sub_jj);
-          vgard_1 = svmul_z(ptrue, vgard_1, vnei_sub_jj);
-          vres0_0 = svmul_z(ptrue, vres0_0, vnei_sub_jj);
-          vres0_1 = svmul_z(ptrue, vres0_1, vnei_sub_jj);
-          vres1_0 = svmul_z(ptrue, vres1_0, vnei_sub_jj);
-          vres1_1 = svmul_z(ptrue, vres1_1, vnei_sub_jj);
-          vres2_0 = svmul_z(ptrue, vres2_0, vnei_sub_jj);
-          vres2_1 = svmul_z(ptrue, vres2_1, vnei_sub_jj);
-          vres3_0 = svmul_z(ptrue, vres3_0, vnei_sub_jj);
-          vres3_1 = svmul_z(ptrue, vres3_1, vnei_sub_jj);
+          vgard_0 = _mm512_mul_ps(vgard_0, vnei_sub_jj);
+          vgard_1 = _mm512_mul_ps(vgard_1, vnei_sub_jj);
+          vres0_0 = _mm512_mul_ps(vres0_0, vnei_sub_jj);
+          vres0_1 = _mm512_mul_ps(vres0_1, vnei_sub_jj);
+          vres1_0 = _mm512_mul_ps(vres1_0, vnei_sub_jj);
+          vres1_1 = _mm512_mul_ps(vres1_1, vnei_sub_jj);
+          vres2_0 = _mm512_mul_ps(vres2_0, vnei_sub_jj);
+          vres2_1 = _mm512_mul_ps(vres2_1, vnei_sub_jj);
+          vres3_0 = _mm512_mul_ps(vres3_0, vnei_sub_jj);
+          vres3_1 = _mm512_mul_ps(vres3_1, vnei_sub_jj);
         }
-        vgard = svadd_z(ptrue, vgard, vgard_0);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_0);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_0);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_0);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_0);
-        vgard = svadd_z(ptrue, vgard, vgard_1);
-        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_1);
-        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_1);
-        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_1);
-        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_1);
+        vgard = _mm512_add_ps(vgard, vgard_0);
+        vdy_dem_0 = _mm512_add_ps(vdy_dem_0, vres0_0);
+        vdy_dem_1 = _mm512_add_ps(vdy_dem_1, vres1_0);
+        vdy_dem_2 = _mm512_add_ps(vdy_dem_2, vres2_0);
+        vdy_dem_3 = _mm512_add_ps(vdy_dem_3, vres3_0);
+        vgard = _mm512_add_ps(vgard, vgard_1);
+        vdy_dem_0 = _mm512_add_ps(vdy_dem_0, vres0_1);
+        vdy_dem_1 = _mm512_add_ps(vdy_dem_1, vres1_1);
+        vdy_dem_2 = _mm512_add_ps(vdy_dem_2, vres2_1);
+        vdy_dem_3 = _mm512_add_ps(vdy_dem_3, vres3_1);
       }
 
-      dy_dem_x[ii * _nnei + jj] = svaddv(ptrue, vgard);
-      dy_dem_tmp[0] = svaddv(ptrue, vdy_dem_0);
-      dy_dem_tmp[1] = svaddv(ptrue, vdy_dem_1);
-      dy_dem_tmp[2] = svaddv(ptrue, vdy_dem_2);
-      dy_dem_tmp[3] = svaddv(ptrue, vdy_dem_3);  
+      dy_dem_x[ii * _nnei + jj] = _mm512_reduce_add_ps(vgard);
+      dy_dem_tmp[0] = _mm512_reduce_add_ps(vdy_dem_0);
+      dy_dem_tmp[1] = _mm512_reduce_add_ps(vdy_dem_1);
+      dy_dem_tmp[2] = _mm512_reduce_add_ps(vdy_dem_2);
+      dy_dem_tmp[3] = _mm512_reduce_add_ps(vdy_dem_3);  
 
       if (unloop) break;
     }
   }   
-  #endif
-  #endif
+
+  // #endif
 }

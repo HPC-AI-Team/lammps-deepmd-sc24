@@ -2,21 +2,20 @@
 #define DEEPMD_COMMON_H 
 
 // #define WITH_TENSOR_FLOW
-// #define COMBIN_OMP
+#define COMBIN_OMP
 
 #define SPLIT_TYPE_EMBEDDING
 
-#define __ARM_FEATURE_SVE
-
-// #define _TABULATE_FITTING
+// #define __ARM_FEATURE_SVE
 
 // #define HIGH_PREC
-
-// #define TABLE_V1
 
 // #define OPT_CBLAS
 
 // make CC=fcc TARGET=ARMV8SVE  NOFORTRAN=1 -j48 |& tee compile.log
+
+#include <immintrin.h>  // AVX-512 intrinsic header
+
 
 #ifdef HIGH_PREC
 typedef double FPTYPE;
@@ -29,18 +28,16 @@ typedef float  FPTYPE;
 typedef double ENERGYTYPE;
 #define cblas_xgemm cblas_sgemm
 #define TABLE_STEP 32
-#define TABLE_STEP_V1 32
 #endif
-
 
 #ifndef HIGH_PREC
+#ifdef OPT_CBLAS
 #define T_FLOAT_16
 #endif
+#endif
 
-#define TABLE_STRIDE_V5 6
-#define TABLE_STRIDE_V1 2
-
-#include <cblas.h>
+// #include <cblas.h>
+#include <mkl_cblas.h>
 
 // #include "OPENBLAS/include/cblas.h"
 // #include "../../CBLAS/openblas/include/cblas.h"
@@ -49,9 +46,12 @@ typedef double ENERGYTYPE;
 #include <string>
 #include <vector>
 #include <cstring>
-#include <arm_sve.h>
 #include <stdlib.h>
 #include <iostream>
+
+#ifdef __ARM_FEATURE_SVE
+#include <arm_sve.h>
+#endif
 #include "matrix_tool.h"
 
 namespace LAMMPS_NS {
@@ -148,15 +148,6 @@ inline void print_v(int n, std::string mesg, const T* v) {
   printf("\n"); std::fflush(stdout);
 }
 
-inline void print_v_full(int n, std::string mesg, const double* v) {
-  printf("%s :\n", mesg.c_str());
-  for(int ii = 0; ii < n; ii ++) {
-    printf("%16.12f ", v[ii]);
-    if(ii % 100 == 0 && ii != 0) printf("\n");
-  }
-  printf("\n"); std::fflush(stdout);
-}
-
 inline void print_v(int n, std::string mesg, std::vector<int> v) {
   printf("%s :\n", mesg.c_str());
   for(int ii = 0; ii < n; ii ++) {
@@ -185,10 +176,10 @@ inline void cum_sum(
 ///////////////// matmul /////////////////////
 //////////////////////////////////////////////
 
-#ifdef __ARM_FEATURE_SVE
+// #ifdef __ARM_FEATURE_SVE
 inline void matmul_1x240_240x240(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_16(ain);
   init_vec_16(bin);
@@ -210,7 +201,9 @@ inline void matmul_1x240_240x240(const int M, const int N, const int K,
       tmp_b = b_fp32 + kk * N;
 
       svld1_vnum_15(bin, tmp_b);
-      svmla_z_15(ain, ain, bin, scala_a)
+
+      __m512 vll2 = _mm512_set1_ps(scala_a);
+      svmla_z_15(ain, ain, bin, vll2)
     }
 
     svst1_vnum_15(tmp_d, ain);
@@ -220,7 +213,7 @@ inline void matmul_1x240_240x240(const int M, const int N, const int K,
 inline void matmul_1x240_240x2048(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_16(ain);
   init_vec_16(bin);
@@ -246,7 +239,9 @@ inline void matmul_1x240_240x2048(const int M, const int N, const int K,
         tmp_b = b_fp32 + kk * N + ll * N / 8;
 
         svld1_vnum_16(bin, tmp_b);
-        svmla_z_16(ain, ain, bin, scala_a)
+
+        __m512 vll2 = _mm512_set1_ps(scala_a);        
+        svmla_z_16(ain, ain, bin, vll2)
       }
 
       svst1_vnum_16(tmp_d, ain);
@@ -254,156 +249,11 @@ inline void matmul_1x240_240x2048(const int M, const int N, const int K,
   }
 }
 
-inline void matmul_2x240_240x2048(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_b, *tmp_d_0, *tmp_d_1;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
-    
-  for(int ll = 0; ll < 16; ll++) {
-    tmp_a_0 = a_fp32 + 0 * K;
-    tmp_a_1 = a_fp32 + 1 * K;
-
-    tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
-    tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
-
-    svld1_vnum_8(ain_0, tmp_d_0);
-    svld1_vnum_8(ain_1, tmp_d_1);
-
-    for(kk = 0; kk < K; kk++) {
-      float scala_a_0 = tmp_a_0[kk];
-      float scala_a_1 = tmp_a_1[kk];
-      tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-      svld1_vnum_8(bin, tmp_b);
-      svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-      svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-    }
-
-    svst1_vnum_8(tmp_d_0, ain_0);
-    svst1_vnum_8(tmp_d_1, ain_1);
-  }
-}
-
-inline void matmul_3x240_240x2048(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(ain_2);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_a_2, *tmp_b;
-  float *tmp_d_0, *tmp_d_1, *tmp_d_2;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
-    
-  for(int ll = 0; ll < 16; ll++) {
-    tmp_a_0 = a_fp32 + 0 * K;
-    tmp_a_1 = a_fp32 + 1 * K;
-    tmp_a_2 = a_fp32 + 2 * K;
-
-    tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
-    tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
-    tmp_d_2 = d_fp32 + 2 * N + ll * N / 16;
-
-    svld1_vnum_8(ain_0, tmp_d_0);
-    svld1_vnum_8(ain_1, tmp_d_1);
-    svld1_vnum_8(ain_2, tmp_d_2);
-
-    for(kk = 0; kk < K; kk++) {
-      float scala_a_0 = tmp_a_0[kk];
-      float scala_a_1 = tmp_a_1[kk];
-      float scala_a_2 = tmp_a_2[kk];
-      tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-      svld1_vnum_8(bin, tmp_b);
-      svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-      svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-      svmla_z_8(ain_2, ain_2, bin, scala_a_2)
-    }
-
-    svst1_vnum_8(tmp_d_0, ain_0);
-    svst1_vnum_8(tmp_d_1, ain_1);
-    svst1_vnum_8(tmp_d_2, ain_2);
-  }
-}
-
-inline void matmul_1x240_240x2048_normal(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_b, *tmp_d_0, *tmp_d_1;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
-  
-  for(int m = 0; m < M; m+=2) {
-    if(m != M - 1) {
-      tmp_a_0 = a_fp32 + (m+0) * K;
-      tmp_a_1 = a_fp32 + (m+1) * K;
-      for(int ll = 0; ll < 16; ll++) {
-
-        tmp_d_0 = d_fp32 + (m+0) * N + ll * N / 16;
-        tmp_d_1 = d_fp32 + (m+1) * N + ll * N / 16;
-
-        svld1_vnum_8(ain_0, tmp_d_0);
-        svld1_vnum_8(ain_1, tmp_d_1);
-
-        for(kk = 0; kk < K; kk++) {
-          float scala_a_0 = tmp_a_0[kk];
-          float scala_a_1 = tmp_a_1[kk];
-          tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-          svld1_vnum_8(bin, tmp_b);
-          svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-          svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-        }
-
-        svst1_vnum_8(tmp_d_0, ain_0);
-        svst1_vnum_8(tmp_d_1, ain_1);
-      }
-    } else {
-      tmp_a_0 = a_fp32 + m * K;
-
-      for(int ll = 0; ll < 8; ll++) {
-
-        tmp_d_0 = d_fp32 + m * N + ll * N / 8;
-
-        svld1_vnum_16(ain_0, tmp_d_0);
-
-        for(kk = 0; kk < K; kk++) {
-          float scala_a = tmp_a_0[kk];
-          tmp_b = b_fp32 + kk * N + ll * N / 8;
-
-          svld1_vnum_16(bin, tmp_b);
-          svmla_z_16(ain_0, ain_0, bin, scala_a);
-        }
-
-        svst1_vnum_16(tmp_d_0, ain_0);
-      }
-    }
-  }
-}
-
 
 inline void matmul_1x2048_2048x240(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_16(ain);
   init_vec_16(bin);
@@ -424,95 +274,18 @@ inline void matmul_1x2048_2048x240(const int M, const int N, const int K,
       tmp_b = b_fp32 + kk * N;
 
       svld1_vnum_15(bin, tmp_b);
-      svmla_z_15(ain, ain, bin, scala_a)
+
+      __m512 vll2 = _mm512_set1_ps(scala_a);
+      svmla_z_15(ain, ain, bin, vll2)
     }
     svst1_vnum_15(tmp_d, ain);
   }
 }
 
-inline void matmul_2x2048_2048x240(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain0);
-  init_vec_16(ain1);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
-
-  float *tmp_a0,*tmp_a1, *tmp_b, *tmp_d0, *tmp_d1;
-      
-  // for(int mm = 0; mm < M; mm++) {
-  tmp_d0 = d_fp32 + 0 * N;
-  tmp_d1 = d_fp32 + 1 * N;
-
-  svld1_vnum_15(ain0, tmp_d0);
-  svld1_vnum_15(ain1, tmp_d1);
-
-  tmp_a0 = a_fp32 + 0 * K;
-  tmp_a1 = a_fp32 + 1 * K;
-  for(int kk = 0; kk < K; kk++) {
-    float scala_a0 = tmp_a0[kk];
-    float scala_a1 = tmp_a1[kk];
-    tmp_b = b_fp32 + kk * N;
-
-    svld1_vnum_15(bin, tmp_b);
-    svmla_z_15(ain0, ain0, bin, scala_a0)
-    svmla_z_15(ain1, ain1, bin, scala_a1)
-  }
-  svst1_vnum_15(tmp_d0, ain0);
-  svst1_vnum_15(tmp_d1, ain1);
-  // }
-}
-inline void matmul_3x2048_2048x240(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain0);
-  init_vec_16(ain1);
-  init_vec_16(ain2);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
-
-  float *tmp_a0,*tmp_a1,*tmp_a2, *tmp_b, *tmp_d0, *tmp_d1,*tmp_d2;
-      
-  // for(int mm = 0; mm < M; mm++) {
-  tmp_d0 = d_fp32 + 0 * N;
-  tmp_d1 = d_fp32 + 1 * N;
-  tmp_d2 = d_fp32 + 2 * N;
-
-  svld1_vnum_15(ain0, tmp_d0);
-  svld1_vnum_15(ain1, tmp_d1);
-  svld1_vnum_15(ain2, tmp_d2);
-
-  tmp_a0 = a_fp32 + 0 * K;
-  tmp_a1 = a_fp32 + 1 * K;
-  tmp_a2 = a_fp32 + 2 * K;
-  for(int kk = 0; kk < K; kk++) {
-
-    float scala_a0 = tmp_a0[kk];
-    float scala_a1 = tmp_a1[kk];
-    float scala_a2 = tmp_a2[kk];
-    tmp_b = b_fp32 + kk * N;
-
-    svld1_vnum_15(bin, tmp_b);
-    svmla_z_15(ain0, ain0, bin, scala_a0)
-    svmla_z_15(ain1, ain1, bin, scala_a1)
-    svmla_z_15(ain2, ain2, bin, scala_a2)
-  }
-  svst1_vnum_15(tmp_d0, ain0);
-  svst1_vnum_15(tmp_d1, ain1);
-  svst1_vnum_15(tmp_d2, ain2);
-  // }
-}
-
 inline void matmul_4x128_128x16(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_16(ain);
   init_vec_16(bin);
@@ -533,7 +306,9 @@ inline void matmul_4x128_128x16(const int M, const int N, const int K,
       tmp_b = b_fp32 + kk * N;
 
       svld1_vnum_15(bin, tmp_b);
-      svmla_z_15(ain, ain, bin, scala_a)
+      __m512 vll2 = _mm512_set1_ps(scala_a);        
+
+      svmla_z_15(ain, ain, bin, vll2)
     }
     svst1_vnum_15(tmp_d, ain);
   }
@@ -542,7 +317,7 @@ inline void matmul_4x128_128x16(const int M, const int N, const int K,
 inline void matmul_128x4_4x16_tn(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_8(ain);
   init_vec_8(bin);
@@ -550,23 +325,58 @@ inline void matmul_128x4_4x16_tn(const int M, const int N, const int K,
   float *tmp_a, *tmp_b, *tmp_d;
 
   tmp_b = b_fp32;
-  bin_0 = svld1_vnum(ptrue, tmp_b, 0 );
-  bin_1 = svld1_vnum(ptrue, tmp_b, 1 );
-  bin_2 = svld1_vnum(ptrue, tmp_b, 2 );
-  bin_3 = svld1_vnum(ptrue, tmp_b, 3 );
+  bin_0 = _mm512_load_ps(tmp_b + 16 * 0 );
+  bin_1 = _mm512_load_ps(tmp_b + 16 * 1 );
+  bin_2 = _mm512_load_ps(tmp_b + 16 * 2 );
+  bin_3 = _mm512_load_ps(tmp_b + 16 * 3 );
 
+  __m512 vll0;  __m512 vll1;  __m512 vll2;  __m512 vll3;  __m512 vll4;  __m512 vll5;  __m512 vll6;  __m512 vll7;
   for(int mm = 0; mm < M; mm += 8) {
     tmp_a = a_fp32 + mm;
-    svmul_z_t_8(ain, bin_0, tmp_a);
+
+    vll0 = _mm512_set1_ps(tmp_a[0]);        
+    vll1 = _mm512_set1_ps(tmp_a[1]);        
+    vll2 = _mm512_set1_ps(tmp_a[2]);        
+    vll3 = _mm512_set1_ps(tmp_a[3]);        
+    vll4 = _mm512_set1_ps(tmp_a[4]);        
+    vll5 = _mm512_set1_ps(tmp_a[5]);        
+    vll6 = _mm512_set1_ps(tmp_a[6]);        
+    vll7 = _mm512_set1_ps(tmp_a[7]);        
+
+    svmul_z_t_vec_8(ain, bin_0, vll);
 
     tmp_a += M;
-    svmla_z_t_8(ain, ain, bin_1, tmp_a);
+    vll0 = _mm512_set1_ps(tmp_a[0]);        
+    vll1 = _mm512_set1_ps(tmp_a[1]);        
+    vll2 = _mm512_set1_ps(tmp_a[2]);        
+    vll3 = _mm512_set1_ps(tmp_a[3]);        
+    vll4 = _mm512_set1_ps(tmp_a[4]);        
+    vll5 = _mm512_set1_ps(tmp_a[5]);        
+    vll6 = _mm512_set1_ps(tmp_a[6]);        
+    vll7 = _mm512_set1_ps(tmp_a[7]);    
+    svmla_z_vec_8(ain, ain, bin_1, vll);
 
     tmp_a += M;
-    svmla_z_t_8(ain, ain, bin_2, tmp_a);
+    vll0 = _mm512_set1_ps(tmp_a[0]);        
+    vll1 = _mm512_set1_ps(tmp_a[1]);        
+    vll2 = _mm512_set1_ps(tmp_a[2]);        
+    vll3 = _mm512_set1_ps(tmp_a[3]);        
+    vll4 = _mm512_set1_ps(tmp_a[4]);        
+    vll5 = _mm512_set1_ps(tmp_a[5]);        
+    vll6 = _mm512_set1_ps(tmp_a[6]);        
+    vll7 = _mm512_set1_ps(tmp_a[7]);    
+    svmla_z_vec_8(ain, ain, bin_2, vll);
 
     tmp_a += M;
-    svmla_z_t_8(ain, ain, bin_3, tmp_a);
+    vll0 = _mm512_set1_ps(tmp_a[0]);        
+    vll1 = _mm512_set1_ps(tmp_a[1]);        
+    vll2 = _mm512_set1_ps(tmp_a[2]);        
+    vll3 = _mm512_set1_ps(tmp_a[3]);        
+    vll4 = _mm512_set1_ps(tmp_a[4]);        
+    vll5 = _mm512_set1_ps(tmp_a[5]);        
+    vll6 = _mm512_set1_ps(tmp_a[6]);        
+    vll7 = _mm512_set1_ps(tmp_a[7]);    
+    svmla_z_vec_8(ain, ain, bin_3, vll);
 
     tmp_d = d_fp32 + mm * N;
     svst1_vnum_8(tmp_d, ain);
@@ -576,79 +386,79 @@ inline void matmul_128x4_4x16_tn(const int M, const int N, const int K,
 inline void matmul_4x16_16x128_nt(const int M, const int N, const int K,
   float *A, float* B, float *C) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
   
   float *tmp_a, *tmp_b, *tmp_c;
   tmp_a = A; 
   tmp_b = B;
   tmp_c = C; 
-  svfloat32_t ain0;   
-  svfloat32_t ain1;   
-  svfloat32_t ain2;   
-  svfloat32_t ain3;
+  __m512 ain0;   
+  __m512 ain1;   
+  __m512 ain2;   
+  __m512 ain3;
 
-  svfloat32_t bin0;   
-  svfloat32_t bin1;   
-  svfloat32_t bin2;   
-  svfloat32_t bin3; 
+  __m512 bin0;   
+  __m512 bin1;   
+  __m512 bin2;   
+  __m512 bin3; 
 
-  svfloat32_t cin0;   
-  svfloat32_t cin1;   
-  svfloat32_t cin2;   
-  svfloat32_t cin3; 
+  __m512 cin0;   
+  __m512 cin1;   
+  __m512 cin2;   
+  __m512 cin3; 
 
-  ain0 = svld1_vnum(ptrue, tmp_a, 0);  
-  ain1 = svld1_vnum(ptrue, tmp_a, 1);  
-  ain2 = svld1_vnum(ptrue, tmp_a, 2);  
-  ain3 = svld1_vnum(ptrue, tmp_a, 3);
+  ain0 = _mm512_load_ps(tmp_a + 16 * 0);  
+  ain1 = _mm512_load_ps(tmp_a + 16 * 1);  
+  ain2 = _mm512_load_ps(tmp_a + 16 * 2);  
+  ain3 = _mm512_load_ps(tmp_a + 16 * 3);
 
   for(int i = 0; i <32; i++) {    
     tmp_b = B + i*64 ;
-    bin0 = svld1_vnum(ptrue, tmp_b, 0);  
-    bin1 = svld1_vnum(ptrue, tmp_b, 1);  
-    bin2 = svld1_vnum(ptrue, tmp_b, 2);  
-    bin3 = svld1_vnum(ptrue, tmp_b, 3);
+    bin0 = _mm512_load_ps(tmp_b + 16 * 0);  
+    bin1 = _mm512_load_ps(tmp_b + 16 * 1);  
+    bin2 = _mm512_load_ps(tmp_b + 16 * 2);  
+    bin3 = _mm512_load_ps(tmp_b + 16 * 3);
 
-    cin0 = svdup_f32(0.); 
-    cin1 = svdup_f32(0.); 
-    cin2 = svdup_f32(0.); 
-    cin3 = svdup_f32(0.); 
+    cin0 = _mm512_setzero_ps(); 
+    cin1 = _mm512_setzero_ps(); 
+    cin2 = _mm512_setzero_ps(); 
+    cin3 = _mm512_setzero_ps(); 
 
-    cin0 = svmul_z(ptrue, bin0, ain0) ; 
-    tmp_c[i*4] = svaddv(ptrue,cin0 );
-    cin1 = svmul_z(ptrue, bin0, ain1) ; 
-    tmp_c[i*4+128] = svaddv(ptrue,cin1 );
-    cin2 = svmul_z(ptrue, bin0, ain2) ; 
-    tmp_c[i*4+256] = svaddv(ptrue,cin2 );
-    cin3 = svmul_z(ptrue, bin0, ain3) ; 
-    tmp_c[i*4+384] = svaddv(ptrue,cin3 );
+    cin0 = _mm512_mul_ps(bin0, ain0) ; 
+    tmp_c[i*4] = _mm512_reduce_add_ps(cin0 );
+    cin1 = _mm512_mul_ps(bin0, ain1) ; 
+    tmp_c[i*4+128] = _mm512_reduce_add_ps(cin1 );
+    cin2 = _mm512_mul_ps(bin0, ain2) ; 
+    tmp_c[i*4+256] = _mm512_reduce_add_ps(cin2 );
+    cin3 = _mm512_mul_ps(bin0, ain3) ; 
+    tmp_c[i*4+384] = _mm512_reduce_add_ps(cin3 );
 
-    cin0 = svmul_z(ptrue, bin1, ain0) ; 
-    tmp_c[i*4+1] = svaddv(ptrue,cin0 );
-    cin1 = svmul_z(ptrue, bin1, ain1) ; 
-    tmp_c[i*4+128+1] = svaddv(ptrue,cin1 );
-    cin2 = svmul_z(ptrue, bin1, ain2) ; 
-    tmp_c[i*4+256+1] = svaddv(ptrue,cin2 );
-    cin3 = svmul_z(ptrue, bin1, ain3) ; 
-    tmp_c[i*4+384+1] = svaddv(ptrue,cin3 );
+    cin0 = _mm512_mul_ps(bin1, ain0) ; 
+    tmp_c[i*4+1] = _mm512_reduce_add_ps(cin0 );
+    cin1 = _mm512_mul_ps(bin1, ain1) ; 
+    tmp_c[i*4+128+1] = _mm512_reduce_add_ps(cin1 );
+    cin2 = _mm512_mul_ps(bin1, ain2) ; 
+    tmp_c[i*4+256+1] = _mm512_reduce_add_ps(cin2 );
+    cin3 = _mm512_mul_ps(bin1, ain3) ; 
+    tmp_c[i*4+384+1] = _mm512_reduce_add_ps(cin3 );
 
-    cin0 = svmul_z(ptrue, bin2, ain0) ; 
-    tmp_c[i*4+2] = svaddv(ptrue,cin0 );
-    cin1 = svmul_z(ptrue, bin2, ain1) ; 
-    tmp_c[i*4+128+2] = svaddv(ptrue,cin1 );
-    cin2 = svmul_z(ptrue, bin2, ain2) ; 
-    tmp_c[i*4+256+2] = svaddv(ptrue,cin2 );
-    cin3 = svmul_z(ptrue, bin2, ain3) ; 
-    tmp_c[i*4+384+2] = svaddv(ptrue,cin3 );
+    cin0 = _mm512_mul_ps(bin2, ain0) ; 
+    tmp_c[i*4+2] = _mm512_reduce_add_ps(cin0 );
+    cin1 = _mm512_mul_ps(bin2, ain1) ; 
+    tmp_c[i*4+128+2] = _mm512_reduce_add_ps(cin1 );
+    cin2 = _mm512_mul_ps(bin2, ain2) ; 
+    tmp_c[i*4+256+2] = _mm512_reduce_add_ps(cin2 );
+    cin3 = _mm512_mul_ps(bin2, ain3) ; 
+    tmp_c[i*4+384+2] = _mm512_reduce_add_ps(cin3 );
 
-    cin0 = svmul_z(ptrue, bin3, ain0) ; 
-    tmp_c[i*4+3] = svaddv(ptrue,cin0 );
-    cin1 = svmul_z(ptrue, bin3, ain1) ; 
-    tmp_c[i*4+128+3] = svaddv(ptrue,cin1 );
-    cin2 = svmul_z(ptrue, bin3, ain2) ; 
-    tmp_c[i*4+256+3] = svaddv(ptrue,cin2 );
-    cin3 = svmul_z(ptrue, bin3, ain3) ; 
-    tmp_c[i*4+384+3] = svaddv(ptrue,cin3 );
+    cin0 = _mm512_mul_ps(bin3, ain0) ; 
+    tmp_c[i*4+3] = _mm512_reduce_add_ps(cin0 );
+    cin1 = _mm512_mul_ps(bin3, ain1) ; 
+    tmp_c[i*4+128+3] = _mm512_reduce_add_ps(cin1 );
+    cin2 = _mm512_mul_ps(bin3, ain2) ; 
+    tmp_c[i*4+256+3] = _mm512_reduce_add_ps(cin2 );
+    cin3 = _mm512_mul_ps(bin3, ain3) ; 
+    tmp_c[i*4+384+3] = _mm512_reduce_add_ps(cin3 );
   }
 }
 
@@ -657,38 +467,15 @@ inline void matmul_4x16_16x128_nt(const int M, const int N, const int K,
 inline void matmul_4x128_128x16_nn(const int M, const int N, const int K,
   float *A, float* B, float *C) {
 
-    // for(int kk = 0; kk < K; kk++) {
-    //   for(int mm = 0; mm < M; mm++) {
-    //     C[mm*16+ 0] += A[mm*K+kk] * B[kk*N + 0];
-    //     C[mm*16+ 1] += A[mm*K+kk] * B[kk*N + 1];
-    //     C[mm*16+ 2] += A[mm*K+kk] * B[kk*N + 2];
-    //     C[mm*16+ 3] += A[mm*K+kk] * B[kk*N + 3];
-    //     C[mm*16+ 4] += A[mm*K+kk] * B[kk*N + 4];
-    //     C[mm*16+ 5] += A[mm*K+kk] * B[kk*N + 5];
-    //     C[mm*16+ 6] += A[mm*K+kk] * B[kk*N + 6];
-    //     C[mm*16+ 7] += A[mm*K+kk] * B[kk*N + 7];
-    //     C[mm*16+ 8] += A[mm*K+kk] * B[kk*N + 8];
-    //     C[mm*16+ 9] += A[mm*K+kk] * B[kk*N + 9];
-    //     C[mm*16+ 10] += A[mm*K+kk] * B[kk*N + 10];
-    //     C[mm*16+ 11] += A[mm*K+kk] * B[kk*N + 11];
-    //     C[mm*16+ 12] += A[mm*K+kk] * B[kk*N + 12];
-    //     C[mm*16+ 13] += A[mm*K+kk] * B[kk*N + 13];
-    //     C[mm*16+ 14] += A[mm*K+kk] * B[kk*N + 14];
-    //     C[mm*16+ 15] += A[mm*K+kk] * B[kk*N + 15];
-    //   }
-    // }
+    __m512 bin_0, cin_0;
+    __m512 bin_1, cin_1;
+    __m512 bin_2, cin_2;
+    __m512 bin_3, cin_3;
 
-    svbool_t ptrue = svptrue_b32();
-
-    svfloat32_t bin_0, cin_0;
-    svfloat32_t bin_1, cin_1;
-    svfloat32_t bin_2, cin_2;
-    svfloat32_t bin_3, cin_3;
-
-    cin_0 = svdup_f32(0.); 
-    cin_1 = svdup_f32(0.); 
-    cin_2 = svdup_f32(0.); 
-    cin_3 = svdup_f32(0.); 
+    cin_0 = _mm512_setzero_ps(); 
+    cin_1 = _mm512_setzero_ps(); 
+    cin_2 = _mm512_setzero_ps(); 
+    cin_3 = _mm512_setzero_ps(); 
 
     for(int kk = 0; kk < K; kk++) {
       float a0 = A[0*K+kk];
@@ -696,26 +483,31 @@ inline void matmul_4x128_128x16_nn(const int M, const int N, const int K,
       float a2 = A[2*K+kk];
       float a3 = A[3*K+kk];
 
-      bin_0 = svld1_vnum(ptrue, B, kk);
+      bin_0 = _mm512_load_ps(B + 16 * kk);
 
-      cin_0 = svmla_z(ptrue, cin_0, bin_0,  a0);
-      cin_1 = svmla_z(ptrue, cin_1, bin_0,  a1);
-      cin_2 = svmla_z(ptrue, cin_2, bin_0,  a2);
-      cin_3 = svmla_z(ptrue, cin_3, bin_0,  a3);
+      __m512 vll0 = _mm512_set1_ps(a0);        
+      __m512 vll1 = _mm512_set1_ps(a1);        
+      __m512 vll2 = _mm512_set1_ps(a2);        
+      __m512 vll3 = _mm512_set1_ps(a3);
+
+      cin_0 = _mm512_fmadd_ps(bin_0,  vll0, cin_0);
+      cin_1 = _mm512_fmadd_ps(bin_0,  vll1, cin_1);
+      cin_2 = _mm512_fmadd_ps(bin_0,  vll2, cin_2);
+      cin_3 = _mm512_fmadd_ps(bin_0,  vll3, cin_3);
 
 
     }
-    svst1_vnum(ptrue, C, 0, cin_0);
-    svst1_vnum(ptrue, C, 1, cin_1);
-    svst1_vnum(ptrue, C, 2, cin_2);
-    svst1_vnum(ptrue, C, 3, cin_3);
+    _mm512_store_ps(C + 16 * 0, cin_0);
+    _mm512_store_ps(C + 16 * 1, cin_1);
+    _mm512_store_ps(C + 16 * 2, cin_2);
+    _mm512_store_ps(C + 16 * 3, cin_3);
 }
 
 
 inline void matmul_1x240_240x1(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_16(ain);
   init_vec_16(bin);
@@ -739,7 +531,7 @@ inline void matmul_1x240_240x1(const int M, const int N, const int K,
 inline void matmul_128x4_4x16(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
-  svbool_t ptrue = svptrue_b32();
+  // svbool_t ptrue = svptrue_b32();
 
   init_vec_8(ain);
   init_vec_8(bin);
@@ -748,293 +540,41 @@ inline void matmul_128x4_4x16(const int M, const int N, const int K,
 
   // load B
   tmp_b = b_fp32;
-  bin_0 = svld1_vnum(ptrue, tmp_b, 0 );
-  bin_1 = svld1_vnum(ptrue, tmp_b, 1 );
-  bin_2 = svld1_vnum(ptrue, tmp_b, 2 );
-  bin_3 = svld1_vnum(ptrue, tmp_b, 3 );
+  bin_0 = _mm512_load_ps(tmp_b + 16 * 0 );
+  bin_1 = _mm512_load_ps(tmp_b + 16 * 1 );
+  bin_2 = _mm512_load_ps(tmp_b + 16 * 2 );
+  bin_3 = _mm512_load_ps(tmp_b + 16 * 3 );
 
   for(int mm = 0; mm < M; mm+=2) {
     tmp_a = a_fp32 + mm * K;
     tmp_d = d_fp32 + mm * N;
 
-    ain_0 = svmul_z(ptrue,        bin_0,  tmp_a[0]);
-    ain_0 = svmla_z(ptrue, ain_0, bin_1,  tmp_a[1]);
-    ain_0 = svmla_z(ptrue, ain_0, bin_2,  tmp_a[2]);
-    ain_0 = svmla_z(ptrue, ain_0, bin_3,  tmp_a[3]);
-
-    ain_1 = svmul_z(ptrue,        bin_0,  tmp_a[0+K]);
-    ain_1 = svmla_z(ptrue, ain_1, bin_1,  tmp_a[1+K]);
-    ain_1 = svmla_z(ptrue, ain_1, bin_2,  tmp_a[2+K]);
-    ain_1 = svmla_z(ptrue, ain_1, bin_3,  tmp_a[3+K]);
-
-    svst1_vnum(ptrue, tmp_d, 0, ain_0);
-    svst1_vnum(ptrue, tmp_d, 1, ain_1);
-  } 
-}
-
-inline void matmul_f16_1x2048_2048x240_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-
-  svbool_t ptrue = svptrue_b32();
-  svbool_t _ptrue = svptrue_b16();
-  svbool_t _half_ptrue = svwhilelt_b16_u64(0, 16);
-
-  init_vec_16(ain);
-  init_vec_16(bin);
-  init_vec_16f16(c16in);
-  init_vec_16f16(d16in);
-
-  dup_0_16fp16(c16in);
-
-  int m_index;
-  float *tmp_a, *tmp_c;
-  float16_t *tmp_b;
-  tmp_c = C;  
-  int kk = 0;
-  float16_t a_fp16[2048];
-  float16_t c_fp16[240];
-  float16_t *tmp_f;
-  tmp_f = c_fp16 ;
-  for(int j = 0; j <2048; j++) {
-    a_fp16[j]=A[j];
-  }
     
-  tmp_a = A;  
-  tmp_c = C;
+      __m512 vll0 = _mm512_set1_ps(tmp_a[0]);        
+      __m512 vll1 = _mm512_set1_ps(tmp_a[1]);        
+      __m512 vll2 = _mm512_set1_ps(tmp_a[2]);        
+      __m512 vll3 = _mm512_set1_ps(tmp_a[3]);  
+      __m512 vlr0 = _mm512_set1_ps(tmp_a[0+K]);        
+      __m512 vlr1 = _mm512_set1_ps(tmp_a[1+K]);        
+      __m512 vlr2 = _mm512_set1_ps(tmp_a[2+K]);        
+      __m512 vlr3 = _mm512_set1_ps(tmp_a[3+K]);  
 
-  for(kk = 0; kk < K; kk++) {
-    float16_t scala_a16 = a_fp16[kk];
-    tmp_b = B + kk * N ;
-    svld1_vnum_fp16_16_240(d16in, tmp_b);
-    svmla_z_f16_240(c16in, c16in, d16in, scala_a16 );
-  }     
+    ain_0 = _mm512_mul_ps(bin_0,  vll0);
+    ain_0 = _mm512_fmadd_ps(bin_1,  vll1, ain_0);
+    ain_0 = _mm512_fmadd_ps(bin_2,  vll2, ain_0);
+    ain_0 = _mm512_fmadd_ps(bin_3,  vll3, ain_0);
 
-  svst1_vnum_fp16_8_240(c_fp16, c16in);
-  for(int j = 0; j < 240; j++) {
-      C[j]+= c_fp16[j];
-  }
-}
+    ain_1 = _mm512_mul_ps(bin_0,  vlr0);
+    ain_1 = _mm512_fmadd_ps(bin_1,  vlr1, ain_1);
+    ain_1 = _mm512_fmadd_ps(bin_2,  vlr2, ain_1);
+    ain_1 = _mm512_fmadd_ps(bin_3,  vlr3, ain_1);
 
-inline void matmul_f16_2x2048_2048x240_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-  svbool_t _ptrue = svptrue_b16();
-  svbool_t _half_ptrue = svwhilelt_b16_u64(0, 16);
-
-  init_vec_16f16(c16in1);
-  init_vec_16f16(d16in);
-
-  dup_0_16fp16(c16in1);
-  int m_index;
-
-  float *tmp_a;
-  float16_t *tmp_b;
-  int kk = 0;
-  float16_t a_fp16[4096];
-  float16_t c_fp16[480];
-  float16_t *tmp_c;
-  tmp_c = c_fp16 ;
-  for(int j = 0; j <4096; j++) {
-    a_fp16[j]=A[j];
-  }
-  
-  for(int mm = 0; mm < M; mm++) {
-    tmp_a = A + mm * K; 
-
-    for(kk = 0; kk < K; kk++) {
-      float16_t scala_a16_1 = a_fp16[kk+mm*K];
-      
-      tmp_b = B + kk * N ;
-
-      svld1_vnum_fp16_16_240(d16in, tmp_b);
-      svmla_z_f16_240(c16in1, c16in1, d16in, scala_a16_1 );
-
-    }     
-    svst1_vnum_fp16_8_240(tmp_c, c16in1);
-    tmp_c = tmp_c + N ;
+    _mm512_store_ps(tmp_d + 16 * 0, ain_0);
+    _mm512_store_ps(tmp_d + 16 * 1, ain_1);
   } 
-  for(int j = 0; j < 480; j++) {
-    C[j]+= c_fp16[j];
-  }
 }
 
-inline void matmul_f16_3x2048_2048x240_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-  svbool_t _ptrue = svptrue_b16();
-  svbool_t _half_ptrue = svwhilelt_b16_u64(0, 16);
-
-  init_vec_16f16(c16in1);
-  init_vec_16f16(d16in);
-
-  dup_0_16fp16(c16in1);
-  int m_index;
-
-  float *tmp_a;
-  float16_t *tmp_b;
-  int kk = 0;
-  float16_t a_fp16[3*2048];
-  float16_t c_fp16[240*3];
-  float16_t *tmp_c;
-  tmp_c = c_fp16 ;
-  for(int j = 0; j <3*2048; j++) {
-    a_fp16[j]=A[j];
-  }
-  
-  for(int mm = 0; mm < M; mm++) {
-    tmp_a = A + mm * K; 
-
-    for(kk = 0; kk < K; kk++) {
-      float16_t scala_a16_1 = a_fp16[kk+mm*K];
-      
-      tmp_b = B + kk * N ;
-
-      svld1_vnum_fp16_16_240(d16in, tmp_b);
-      svmla_z_f16_240(c16in1, c16in1, d16in, scala_a16_1 );
-
-    }     
-    svst1_vnum_fp16_8_240(tmp_c, c16in1);
-    tmp_c = tmp_c + N ;
-  } 
-  for(int j = 0; j < 240*3; j++) {
-    C[j]+= c_fp16[j];
-  }
-}
-
-inline void matmul_f16_1x240_240x2048_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-  svbool_t _ptrue = svptrue_b16();
-
-  init_vec_16f16(c16in);
-  init_vec_16f16(d16in);
-
-  float16_t *tmp_b;
-  int kk = 0;
-  float16_t a_fp16[240];
-  float16_t c_fp16[2048] = {0.};
-  float16_t *tmp_c;
-  for(int j = 0; j <240; j++) {
-    a_fp16[j]=A[j];
-  }
-  
-  for(int ll = 0; ll < 4; ll++) {
-
-    tmp_c = c_fp16 + ll * N / 4;
-    svld1_vnum_f16_16(c16in, tmp_c);
-    for(kk = 0; kk < K; kk++) {
-      float16_t scala_a16_1 = a_fp16[kk];
-      tmp_b = B + kk * N  + ll * N / 4;
-
-      svld1_vnum_f16_16(d16in, tmp_b);
-      
-      svmla_z_f16_16(c16in, c16in, d16in, scala_a16_1 );
-      
-    } 
-    svst1_vnum_f16_16(tmp_c, c16in);   
-  } 
-  
-  for(int j = 0; j < 2048; j++) {
-    C[j]+= c_fp16[j];
-  }
-}
-
-inline void matmul_f16_2x240_240x2048_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-  svbool_t _ptrue = svptrue_b16();
-
-  init_vec_16f16(c16in1);
-  init_vec_16f16(c16in2);
-  init_vec_16f16(d16in);
-
-  int m_index;
-
-  float16_t *tmp_b;
-  int kk = 0;
-  float16_t a_fp16[480];
-  float16_t c_fp16[4096] = {0};
-  float16_t *tmp_c1, *tmp_c2;
-  for(int j = 0; j <480; j++) {
-    a_fp16[j]=A[j];
-  }
-         
-  for(int ll = 0; ll < 8; ll++) {
-    tmp_c1 = c_fp16 + ll * N / 8;
-    tmp_c2 = c_fp16 + N + ll * N / 8;
-    svld1_vnum_f16_8(c16in1, tmp_c1);
-    svld1_vnum_f16_8(c16in2, tmp_c2);
-
-    for(kk = 0; kk < K; kk++) {
-      float16_t scala_a16_1 = a_fp16[kk];
-      float16_t scala_a16_2 = a_fp16[kk+K];
-      tmp_b = B + kk * N  + ll * N / 8;
-
-      svld1_vnum_f16_8(d16in, tmp_b);
-      svmla_z_f16_8(c16in1, c16in1, d16in, scala_a16_1 );
-      svmla_z_f16_8(c16in2, c16in2, d16in, scala_a16_2 );
-    } 
-    tmp_c1 = c_fp16 + ll * N / 8;
-    tmp_c2 = c_fp16 + N + ll * N / 8;
-    svst1_vnum_f16_8(tmp_c1, c16in1); 
-    svst1_vnum_f16_8(tmp_c2, c16in2);
-  }
-  
-  for(int j = 0; j < 4096; j++) {
-    C[j]+= c_fp16[j];
-  }
-}
-
-inline void matmul_f16_3x240_240x2048_nn(const int M, const int N, const int K,
-  float *A, float16_t* B, float *C) {
-  svbool_t _ptrue = svptrue_b16();
-
-  init_vec_16f16(c16in1);
-  init_vec_16f16(c16in2);
-  init_vec_16f16(c16in3);
-  init_vec_16f16(d16in);
-
-  int m_index;
-
-  float16_t *tmp_b;
-  int kk = 0;
-  float16_t a_fp16[3*240];
-  float16_t c_fp16[3*2048] = {0};
-  float16_t *tmp_c1, *tmp_c2, *tmp_c3;
-  for(int j = 0; j <3*240; j++) {
-    a_fp16[j]=A[j];
-  }
-         
-  for(int ll = 0; ll < 8; ll++) {
-    tmp_c1 = c_fp16 + 0 * N +ll * N / 8;
-    tmp_c2 = c_fp16 + 1 * N + ll * N / 8;
-    tmp_c3 = c_fp16 + 2 * N + ll * N / 8;
-    svld1_vnum_f16_8(c16in1, tmp_c1);
-    svld1_vnum_f16_8(c16in2, tmp_c2);
-    svld1_vnum_f16_8(c16in3, tmp_c3);
-
-    for(kk = 0; kk < K; kk++) {
-      float16_t scala_a16_1 = a_fp16[kk+K*0];
-      float16_t scala_a16_2 = a_fp16[kk+K*1];
-      float16_t scala_a16_3 = a_fp16[kk+K*2];
-      tmp_b = B + kk * N  + ll * N / 8;
-
-      svld1_vnum_f16_8(d16in, tmp_b);
-      svmla_z_f16_8(c16in1, c16in1, d16in, scala_a16_1 );
-      svmla_z_f16_8(c16in2, c16in2, d16in, scala_a16_2 );
-      svmla_z_f16_8(c16in3, c16in3, d16in, scala_a16_3 );
-    } 
-    tmp_c1 = c_fp16 + 0 * N + ll * N / 8;
-    tmp_c2 = c_fp16 + 1 * N + ll * N / 8;
-    tmp_c3 = c_fp16 + 2 * N + ll * N / 8;
-    svst1_vnum_f16_8(tmp_c1, c16in1); 
-    svst1_vnum_f16_8(tmp_c2, c16in2);
-    svst1_vnum_f16_8(tmp_c3, c16in3);
-  }
-  
-  for(int j = 0; j < 3*2048; j++) {
-    C[j]+= c_fp16[j];
-  }
-}
-
-
-#endif
+// #endif
 
 
 //////////////////////////////////////////////
@@ -1048,14 +588,8 @@ void matmul(const int m, const int n, const int k,
 void matmul(const int m, const int n, const int k,
   float *A, float* B, float *C, float *D) ;
 
-void matmul(const int m, const int n, const int k,
-  double *A, float16_t* B, double *C, double *D, float16_t* buf) ;
-
-void matmul(const int m, const int n, const int k,
-  float *A, float16_t* B, float *C, float *D, float16_t* buf) ;
-
 // void matmul(const int m, const int n, const int k,
-//   double *A, float16_t* B, double *C, double *D, float16_t* buf) ;
+//   float *A, _Float16* B, float *C, float *D) ;
 
 void matmul_3d(const int t, const int m, const int n, const int k,
   double* A, double* B, double* C, bool _transpose_a, bool _transpose_b);

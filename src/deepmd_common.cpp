@@ -22,8 +22,6 @@ void matmul(const int m, const int n, const int k,
     beta = 0.;
   }
 
-  // printf("matmul m n k %d %d %d \n", m, n, k); std::fflush(stdout);
-
   cblas_dgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans,
     m,n,k,
     alpha,A,k,
@@ -48,7 +46,6 @@ void matmul(const int m, const int n, const int k,
     memset(D, 0, m * n * sizeof(float));
   }
 
-  // #ifdef OPT_CBLAS
   if(k == 240 && n == 240 && m == 1) {
     matmul_1x240_240x240(m, n, k, A, B, D);
   } 
@@ -61,18 +58,18 @@ void matmul(const int m, const int n, const int k,
   // else if(k == 240 && n == 2048 && m == 3) {
   //   matmul_3x240_240x2048(m, n, k, A, B, D);
   // }
-  // else if(k == 2048 && n == 240 && m == 1) {
-  //   matmul_1x2048_2048x240(m, n, k, A, B, D);
-  // }
+  else if(k == 2048 && n == 240 && m == 1) {
+    matmul_1x2048_2048x240(m, n, k, A, B, D);
+  }
   // else if(k == 2048 && n == 240 && m == 2) {
   //   matmul_2x2048_2048x240(m, n, k, A, B, D);
   // }
   // else if(k == 2048 && n == 240 && m == 3) {
   //   matmul_3x2048_2048x240(m, n, k, A, B, D);
   // }
-  // else if(k == 240 && n == 1 && m <= 3) {
-  //   matmul_1x240_240x1(m, n, k, A, B, D);
-  // }
+  else if(k == 240 && n == 1 && m == 1) {
+    matmul_1x240_240x1(m, n, k, A, B, D);
+  }
   else {
       cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans,
         m,n,k,
@@ -80,64 +77,42 @@ void matmul(const int m, const int n, const int k,
         B,n,
         beta,D,n);
   }
-  // #else 
-  //   cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-  //       m,n,k,
-  //       alpha,A,k,
-  //       B,n,
-  //       beta,D,n);
-  // #endif
 }
 
 
-void matmul(const int m, const int n, const int k,
-  float *A, float16_t* B, float *C, float *D, float16_t *buf){
-  float alpha = 1.;
-  float beta = 0.;
-  int lda=k;
-  int ldb=n;
-  int ldc=n;
+// void matmul(const int m, const int n, const int k,
+//   float *A, float16_t* B, float *C, float *D){
+//   float alpha = 1.;
+//   float beta = 1.;
+//   int lda=k;
+//   int ldb=n;
+//   int ldc=n;
 
-  if(C != NULL) {
-    for(int i = 0; i < m; i++) {
-      std::memcpy(D + i * n, C, n * sizeof(float));
-    }
-  } else {
-    beta = 0.;
-    memset(D, 0, m * n * sizeof(float));
-  }
+//   if(C != NULL) {
+//     for(int i = 0; i < m; i++) {
+//       std::memcpy(D + i * n, C, n * sizeof(float));
+//     }
+//   } else {
+//     beta = 0.;
+//     memset(D, 0, m * n * sizeof(float));
+//   }
 
-  if(k == 2048 && n == 240 && m == 1) {
-    matmul_f16_1x2048_2048x240_nn(m, n, k, A, B, D);
-  // } else if(k == 2048 && n == 240 && m == 2) {
-  //   matmul_f16_2x2048_2048x240_nn(m, n, k, A, B, D);
-  // } else if(k == 2048 && n == 240 && m == 3) {
-  //   matmul_f16_3x2048_2048x240_nn(m, n, k, A, B, D);
-  } else if(k == 240 && n == 2048 && m == 1) {
-    matmul_f16_1x240_240x2048_nn(m, n, k, A, B, D);
-  // } else if(k == 240 && n == 2048 && m == 2) {
-  //   matmul_f16_2x240_240x2048_nn(m, n, k, A, B, D);
-  // } else if(k == 240 && n == 2048 && m == 3) {
-  //   matmul_f16_3x240_240x2048_nn(m, n, k, A, B, D);
-  } else {
-    float16_t* a_fp16 = buf;
-    float16_t* c_fp16 = buf + m * k;
-
-    memset(c_fp16, 0, m * n * sizeof(float16_t));
-
-    for(int i = 0; i < m * k ; i++) {
-      a_fp16[i] = A[i];
-    }
-
-    ss_fjcblas_gemm_r16(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-        m,n,k,
-        alpha,a_fp16,lda,
-        B,ldb,
-        0.0,c_fp16,ldc);
-        
-    for(int j = 0; j < m * n; j++) D[j] += c_fp16[j];
-  }
-}
+//   if(k == 2048 && n == 240 && m == 1) {
+//     matmul_f16_1x2048_2048x240_nn(m, n, k, A, B, D);
+//   } else if(k == 2048 && n == 240 && m == 2) {
+//     matmul_f16_2x2048_2048x240_nn(m, n, k, A, B, D);
+//   } else if(k == 2048 && n == 240 && m == 3) {
+//     matmul_f16_3x2048_2048x240_nn(m, n, k, A, B, D);
+//   } else if(k == 240 && n == 2048 && m == 1) {
+//     matmul_f16_1x240_240x2048_nn(m, n, k, A, B, D);
+//   } else if(k == 240 && n == 2048 && m == 2) {
+//     matmul_f16_2x240_240x2048_nn(m, n, k, A, B, D);
+//   } else if(k == 240 && n == 2048 && m == 3) {
+//     matmul_f16_3x240_240x2048_nn(m, n, k, A, B, D);
+//   } else {
+//     assert(1 == 0);
+//   }
+// }
 
 void matmul_3d(const int t, const int m, const int n, const int k,
   double* A, double* B, double* C, bool _transpose_a = false, bool _transpose_b = false){
@@ -172,14 +147,13 @@ void matmul_3d(const int t, const int m, const int n, const int k,
   CBLAS_TRANSPOSE transpose_a = _transpose_a ? CblasTrans : CblasNoTrans;
   CBLAS_TRANSPOSE transpose_b = _transpose_b ? CblasTrans : CblasNoTrans;
 
-  // #ifdef OPT_CBLAS
-  if(m == 128 && k == 4 && n == 16 && _transpose_a == true && _transpose_b == false) {
+  if(k == 4 && n == 16 && m == 128 && _transpose_a == true && _transpose_b == false) {
     for(int ii = 0; ii < t; ii++) {
       matmul_128x4_4x16_tn(m, n, k, 
               A+ii*m*k, B+ii*k*n, C+ii*m*n);
     }
   } 
-  else if(m == 4 && k == 16 && n == 128 && _transpose_a == false && _transpose_b == true) {
+  else if(k == 16 && n == 128 && m == 4 && _transpose_a == false && _transpose_b == true) {
     for(int ii = 0; ii < t; ii++) {
       matmul_4x16_16x128_nt(m, n, k, 
               A+ii*m*k, B+ii*k*n, C+ii*m*n);
@@ -214,16 +188,7 @@ void matmul_3d(const int t, const int m, const int n, const int k,
     //   }
     // }
   } 
-  // #else
-  //   for(int ii = 0; ii < t; ii++) {
-  //     cblas_sgemm(CblasRowMajor,transpose_a,transpose_b,
-  //       m,n,k,
-  //       alpha,A+ii*m*k,lda,
-  //       B+ii*k*n,ldb,
-  //       beta,C+ii*m*n,ldc);
-  //   }
 
-  // #endif
   
   
 }
@@ -280,71 +245,6 @@ void matmul(const int m, const int n, const int k,
 
 }
 
-void matmul(const int m, const int n, const int k,
-  double *A, float16_t* B, double *C, double *D, float16_t* buf){
-  __fp16 alpha = 1.;
-  __fp16 beta = 0.;
-  int lda=k;
-  int ldb=n;
-  int ldc=n;
-
-  float16_t* a_fp16 = buf;
-  float16_t* c_fp16 = buf + m * k;
-
-  if(C != NULL) {
-    for(int i = 0; i < m; i++) {
-      std::memcpy(D + i * n, C, n * sizeof(double));
-    }
-  } else {
-    memset(D, 0, m * n * sizeof(double));
-  }
-  memset(c_fp16, 0, m * n * sizeof(float16_t));
-
-  for(int i = 0; i < m * k ; i++) {
-    a_fp16[i] = A[i];
-  }
-
-  ss_fjcblas_gemm_r16(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-      m,n,k,
-      alpha,a_fp16,lda,
-      B,ldb,
-      beta,c_fp16,ldc);
-
-  for(int j = 0; j < m * n; j++) D[j] += c_fp16[j];
-}
-
-void matmul(const int m, const int n, const int k,
-  float *A, float16_t* B, float *C, float *D, float16_t* buf){
-  __fp16 alpha = 1.;
-  __fp16 beta = 0.;
-  int lda=k;
-  int ldb=n;
-  int ldc=n;
-
-  float16_t* a_fp16 = buf;
-  float16_t* c_fp16 = buf + m * k;
-
-  if(C != NULL) {
-    for(int i = 0; i < m; i++) {
-      std::memcpy(D + i * n, C, n * sizeof(float));
-    }
-  } else {
-    memset(D, 0, m * n * sizeof(float));
-  }
-  memset(c_fp16, 0, m * n * sizeof(float16_t));
-
-  for(int i = 0; i < m * k ; i++) {
-    a_fp16[i] = A[i];
-  }
-
-  ss_fjcblas_gemm_r16(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-      m,n,k,
-      alpha,a_fp16,lda,
-      B,ldb,
-      beta,c_fp16,ldc);
-
-  for(int j = 0; j < m * n; j++) D[j] += c_fp16[j];
-}
 
 void matmul_3d(const int t, const int m, const int n, const int k,
   double* A, double* B, double* C, bool _transpose_a = false, bool _transpose_b = false){

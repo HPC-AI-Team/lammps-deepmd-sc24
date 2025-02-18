@@ -31,47 +31,37 @@ export THREAD_POOL_FLAG=1
 export COMM_DEBUG_FLAG=0
 
 export TABULATE_FLAG=5
-export TEST_FP16=0
 mpiexec ./lmp_execute_double  -in ./in.deepmd_accuracy_fp64                          # Execute a.out
 
 export TABULATE_FLAG=5
-export TEST_FP16=0
-mpiexec ./lmp_execute_cblas  -in ./in.deepmd_accuracy_fp32                          # Execute a.out
-export TEST_FP16=1
 mpiexec ./lmp_execute_cblas  -in ./in.deepmd_accuracy_fp16                          # Execute a.out
 
 export TABULATE_FLAG=5
-export TEST_FP16=1
 mpiexec ./lmp_execute_float  -in ./in.deepmd_accuracy_fp16                          # Execute a.out
 
 export TABULATE_FLAG=1
-export TEST_FP16=1
 mpiexec ./lmp_execute_float  -in ./in.deepmd_accuracy_fp16_v0001                          # Execute a.out
 
 
 export TABULATE_FLAG=5
-export TEST_FP16=0
-mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01    -l log_double.log                       # Execute a.out
 sleep 1
-mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01    -l log_double.log                     # Execute a.out
 sleep 1
 export TABULATE_FLAG=5
-export TEST_FP16=1
-mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01     -l log_cblas.log                     # Execute a.out
 sleep 1
-mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01     -l log_cblas.log                     # Execute a.out
 sleep 1
 
 export TABULATE_FLAG=5
-export TEST_FP16=1
-mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01    -l log_float.log                      # Execute a.out
 sleep 1
-mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01    -l log_float.log                      # Execute a.out
 sleep 1
 
 export TABULATE_FLAG=1
-export TEST_FP16=1
-mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001   -l log_float_v0001.log                       # Execute a.out
 sleep 1
-mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001                          # Execute a.out
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001   -l log_float_v0001.log                       # Execute a.out
 sleep 1

@@ -68,7 +68,7 @@ class PairDeepMD : public Pair, public ThrOMP {
   double **scale;
 
 private:  
-  int first_time[T_THREAD] = {0};
+  int *first_time;
   DeepPot *deep_pot;
   DeepPot **deep_pots;
   int num_threads = 1;
@@ -96,7 +96,7 @@ private:
   int out_rel_v;
   bool is_restart;
 
-  int *test_buffer[T_THREAD];
+  // int *test_buffer[T_THREAD];
 
   int max_nall;
   int max_nloc;
