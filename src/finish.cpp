@@ -352,23 +352,27 @@ void Finish::end(int flag)
     //   self_timer->cpu_array[ii] = tc[ii] / comm->nthreads; self_timer->wall_array[ii] = tw[ii] / comm->nthreads;
     // }
 
+    // #define DEEPMD_TEST
 
-    // double tc[100], tw[100];
-    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
-    //   tc[ii] = 0.0; tw[ii] = 0.0;
-    //   for(int jj = 0; jj < comm->nthreads; jj++) {
-    //     if(tc[ii] < lmp->deep_pots[jj]->t_timer->cpu_array[ii]) tc[ii] = lmp->deep_pots[jj]->t_timer->cpu_array[ii];
-    //     if(tw[ii] < lmp->deep_pots[jj]->t_timer->wall_array[ii]) tw[ii] = lmp->deep_pots[jj]->t_timer->wall_array[ii];
-    //   }
-    // }
-    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
-    //   self_timer->cpu_array[ii] = tc[ii]; self_timer->wall_array[ii] = tw[ii];
-    // }
-    // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
-    //   self_timer->cpu_array[ii] = lmp->deep_pots[0]->t_timer->cpu_array[ii]; 
-    //   self_timer->wall_array[ii] = lmp->deep_pots[0]->t_timer->wall_array[ii];
-    // }
+    #ifdef DEEPMD_TEST
+      double tc[100], tw[100];
+      for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+        tc[ii] = 0.0; tw[ii] = 0.0;
+        for(int jj = 0; jj < comm->nthreads; jj++) {
+          if(tc[ii] < lmp->deep_pots[jj]->t_timer->cpu_array[ii]) tc[ii] = lmp->deep_pots[jj]->t_timer->cpu_array[ii];
+          if(tw[ii] < lmp->deep_pots[jj]->t_timer->wall_array[ii]) tw[ii] = lmp->deep_pots[jj]->t_timer->wall_array[ii];
+        }
+      }
+      for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+        self_timer->cpu_array[ii] = tc[ii]; self_timer->wall_array[ii] = tw[ii];
+      }
+      for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+        self_timer->cpu_array[ii] = lmp->deep_pots[0]->t_timer->cpu_array[ii]; 
+        self_timer->wall_array[ii] = lmp->deep_pots[0]->t_timer->wall_array[ii];
+      }
+    #endif
 
+    mpi_timings("BARRIER_PAIR",self_timer,Timer::BARRIER_PAIR,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("PREPARE",self_timer,Timer::PREPARE,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("DO_NEIGHBOR",self_timer,Timer::DO_NEIGHBOR,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("PROD_ENV",self_timer,Timer::PROD_ENV,world,nprocs,nthreads,me,time_loop,screen,logfile);
@@ -388,7 +392,7 @@ void Finish::end(int flag)
     mpi_timings("IDT_MULT_GRAD",self_timer,Timer::IDT_MULT_GRAD,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("MATRIX_ADD",self_timer,Timer::MATRIX_ADD,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("MATMUL_3D",self_timer,Timer::MATMUL_3D,world,nprocs,nthreads,me,time_loop,screen,logfile);
-    mpi_timings("FIT_SLICE",self_timer,Timer::FIT_SLICE,world,nprocs,nthreads,me,time_loop,screen,logfile);
+    // mpi_timings("FIT_SLICE",self_timer,Timer::FIT_SLICE,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("MATMUL_2D_0",self_timer,Timer::MATMUL_2D_0,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("MATMUL_2D_1",self_timer,Timer::MATMUL_2D_1,world,nprocs,nthreads,me,time_loop,screen,logfile);
     mpi_timings("MATMUL_2D_2",self_timer,Timer::MATMUL_2D_2,world,nprocs,nthreads,me,time_loop,screen,logfile);
@@ -419,7 +423,59 @@ void Finish::end(int flag)
       else
         utils::logmesg(lmp,"Other   |            | {:<10.4g} |            |  "
                        "     |{:6.2f}\n",time,time/time_loop*100.0);
+
+
+      // double _all_time[100][12];
+      // for(int ii = Timer::PREPARE; ii <= Timer::MATMUL_2D_3; ii++) {
+      //   for(int jj = 0; jj < comm->nthreads; jj++) {
+      //     _all_time[ii][jj] = lmp->deep_pots[jj]->t_timer->wall_array[ii];
+      //   }
+      // }
+      // int _ii = Timer::PREPARE;
+
+      // utils::logmesg_arry(lmp, "PREPARE", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "DO_NEIGHBOR", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "PROD_ENV", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "EM_SLICE", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "TABULATE", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "EM_MUT_3D", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "FIT_CAST", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "TABULATE_GRAD", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "PROD_FV", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_ADD_0", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_ADD_1", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_ADD_2", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_ADD_3", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "FAST_TANH", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "FAST_TANH_GRAD", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "IDT_MULT", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "IDT_MULT_GRAD", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATRIX_ADD", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_3D", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "FIT_SLICE", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_2D_0", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_2D_1", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_2D_2", _all_time[_ii++], 12, 1);
+      // utils::logmesg_arry(lmp, "MATMUL_2D_3", _all_time[_ii++], 12, 1);
     }
+
+    // double total_times[1024], total_time;
+
+    // total_time= timer->get_wall(Timer::PAIR);
+    // MPI_Allgather(&total_time,1,MPI_DOUBLE,total_times,1,MPI_DOUBLE,world);
+    // if(me == 0) {
+    //   utils::logmesg_arry(lmp, "pair time", total_times, nprocs, 1);
+    // }
+    // total_time= timer->get_wall(Timer::COMM);
+    // MPI_Allgather(&total_time,1,MPI_DOUBLE,total_times,1,MPI_DOUBLE,world);
+    // if(me == 0) {
+    //   utils::logmesg_arry(lmp, "comm time", total_times, nprocs, 1);
+    // }
+    // total_time= self_timer->get_wall(Timer::BARRIER_PAIR);
+    // MPI_Allgather(&total_time,1,MPI_DOUBLE,total_times,1,MPI_DOUBLE,world);
+    // if(me == 0) {
+    //   utils::logmesg_arry(lmp, "BARRIER_PAIR time", total_times, nprocs, 1);
+    // }
   }
 
 #ifdef LMP_OPENMP

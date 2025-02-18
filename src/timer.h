@@ -41,7 +41,6 @@ class Timer : protected Pointers {
     FIT_CAST,
     TABULATE_GRAD,
     PROD_FV,
-
     MATMUL_ADD_0,
     MATMUL_ADD_1,
     MATMUL_ADD_2,
@@ -53,25 +52,26 @@ class Timer : protected Pointers {
     MATRIX_ADD,
     MATMUL_3D,
     FIT_SLICE,
-
     MATMUL_2D_0,
     MATMUL_2D_1,
     MATMUL_2D_2,
     MATMUL_2D_3,
 
+    BARRIER_PAIR,
 
 
 
 
-    // PARTICLE_MAP,
-    // MAKE_RHO,
-    // GC_REVERSE,
-    // BRICK2FFT,
-    // POISSON,
-    // FFT1,
-    // FFT2_0,
-    // FFT2_1,
-    // FFT2_2,
+
+    PARTICLE_MAP,
+    MAKE_RHO,
+    GC_REVERSE,
+    BRICK2FFT,
+    POISSON,
+    FFT1,
+    FFT2_0,
+    FFT2_1,
+    FFT2_2,
 
 
     SYNC,

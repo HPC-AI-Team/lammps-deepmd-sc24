@@ -17,7 +17,7 @@
 #include "tensorflow/core/graph/graph_def_builder.h"
 #endif
 
-#define SPLIT_TYPE_EMBEDDING
+// #define SPLIT_TYPE_EMBEDDING
 
 #ifdef __ARM_FEATURE_SVE
 #include <arm_sve.h> 
@@ -50,6 +50,27 @@ struct PB_param_type1
 // } ;
 } __attribute__ ((aligned(256)));
 
+struct PB_param_type4
+{
+  float c_matrix_0[2048*240];
+  float c_matrix_1[240*240];
+  float c_matrix_2[240*240];
+  float c_matrix_3[240*1];
+  float c_bias_0[240];
+  float c_bias_1[240];
+  float c_bias_2[240];
+  float c_bias_3[1];
+  float c_idt_0[240];
+  float c_idt_1[240];
+  float c_idt_2[240];
+  float c_idt_3[240];
+  float c_table[136000*256];
+  float c_table_info[6];
+  float std_ones[2048];
+  float avg_zero[2048];
+// } ;
+} __attribute__ ((aligned(256)));
+
 struct PB_param_type2
 {
   double c_matrix_0[2][2048*240];
@@ -68,6 +89,27 @@ struct PB_param_type2
   double c_table_info[6];
   double std_ones[2*552];
   double avg_zero[2*552];
+// } ;
+} __attribute__ ((aligned(256)));
+
+struct PB_param_type3
+{
+  float c_matrix_0[2][2048*240];
+  float c_matrix_1[2][240*240];
+  float c_matrix_2[2][240*240];
+  float c_matrix_3[2][240*1];
+  float c_bias_0[2][240];
+  float c_bias_1[2][240];
+  float c_bias_2[2][240];
+  float c_bias_3[2][1];
+  float c_idt_0[2][240];
+  float c_idt_1[2][240];
+  float c_idt_2[2][240];
+  float c_idt_3[2][240];
+  float c_table[2*2][136000*256];
+  float c_table_info[6];
+  float std_ones[2*552];
+  float avg_zero[2*552];
 // } ;
 } __attribute__ ((aligned(256)));
 
@@ -193,7 +235,8 @@ public:
   void load_data_from_dat(std::string graph_path);
 
   void store_pb_data();
-
+  void table_convert(FPTYPE** &_in_table, int _ntypes);
+  
   void compute (ENERGYTYPE &	ener,
 		double* &	force,
 		double* &	virial,
@@ -227,6 +270,7 @@ public:
                       FPTYPE* &em,
                       FPTYPE *out,
                       const FPTYPE* _table);
+
                       
   void tabulateFusion_sve(int _loc, int _nnei,
                       FPTYPE* &em_x,
@@ -242,6 +286,34 @@ public:
                       FPTYPE *em, 
                       FPTYPE *dy) ;
   void tabulate_fusion_grad_cpu_packing_sve(int _nloc, int _nnei,
+                      FPTYPE *dy_dem_x, 
+                      FPTYPE *dy_dem,
+                      const FPTYPE * _table, 
+                      FPTYPE *em_x, 
+                      FPTYPE *em, 
+                      FPTYPE *dy) ;
+
+  // void tabulateFusion_v1(int _loc, int _nnei,
+  //                     FPTYPE* &em_x,
+  //                     FPTYPE* &em,
+  //                     FPTYPE *out,
+  //                     const FPTYPE* _table);
+
+
+  // void tabulate_fusion_grad_cpu_packing_v1(int _nloc, int _nnei,
+  //                     FPTYPE *dy_dem_x, 
+  //                     FPTYPE *dy_dem,
+  //                     const FPTYPE * _table, 
+  //                     FPTYPE *em_x, 
+  //                     FPTYPE *em, 
+  //                     FPTYPE *dy) ;
+
+  void tabulateFusion_v1_sve(int _loc, int _nnei,
+                      FPTYPE* &em_x,
+                      FPTYPE* &em,
+                      FPTYPE *out,
+                      const FPTYPE* _table);
+  void tabulate_fusion_grad_cpu_packing_v1_sve(int _nloc, int _nnei,
                       FPTYPE *dy_dem_x, 
                       FPTYPE *dy_dem,
                       const FPTYPE * _table, 
@@ -305,6 +377,7 @@ public:
   int ndescrpt_a, ndescrpt_r, ndescrpt;
   int ntypes;
   FPTYPE  *c_table_info, **c_table;
+  // FPTYPE  **c_table_info_v1, **c_table_v1;
   FPTYPE  **c_matrix[4], **c_bias[4], **c_idt[4],  **c_matrix_t[4];
 
   float16_t  **c_matrix_fp16[4],  **c_matrix_t_fp16[4];
@@ -314,6 +387,8 @@ public:
   std::vector<int> sec_a;
 
   class Timer *t_timer;
+
+  // float *table_fitting;
 
   int max_nnei;
   int max_all_nei;
@@ -356,8 +431,8 @@ private:
   int **d_nlist_a;
   int *d_nlist_size;
 
-  uint64_t *sel_nei;
-  // NeighborInfo *sel_nei;
+  // uint64_t *sel_nei;
+  NeighborInfo *sel_nei;
   int sel_nei_size;
 
   int *nei_num_v;
@@ -394,6 +469,8 @@ private:
   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
   FPTYPE *layer_1_grad_reg, *layer_2_grad_reg;
+
+  __fp16 *gemm_fp16_buf;
 
   FPTYPE *xyz_scatter_1_grad, *xyz_scatter_2_grad;
 

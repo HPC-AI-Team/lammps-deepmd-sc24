@@ -1,4 +1,4 @@
-module sw lang/tcsds-1.2.38
+# module sw lang/tcsds-1.2.38
 
 (make -j48 omp_double 2>&1) | tee compile.log
 

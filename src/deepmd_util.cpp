@@ -271,10 +271,10 @@ inline void select_real_atoms(std::vector<int> & fwd_map,
       fwd_map[ii] = cc;
       cc ++;
     }
-    else{
+    else {
       fwd_map[ii] = -1;
     }
-  }  
+  }
   assert((nloc_real+nghost_real) == bkw_map.size());  
 }
 
@@ -316,10 +316,13 @@ FPTYPE*  DeepPot::get_node_attr(std::string node_name, tensorflow::GraphDef grap
             }
             FPTYPE *tmp_data = new FPTYPE[size];
             
-            if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] {} {} size {}\n", node_name, tensor.DebugString(), size));
+            if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] {} {} size {}  type {}\n", node_name, tensor.DebugString(), size, tensor.dtype()));
 
             for(int jj = 0; jj < size; jj++) {
-              tmp_data[jj] = tensor.flat<double>().data()[jj];
+              if(tensor.dtype() == 1)
+                tmp_data[jj] = tensor.flat<float>().data()[jj];
+              else 
+                tmp_data[jj] = tensor.flat<double>().data()[jj];
             }
             return tmp_data;
 
@@ -436,54 +439,83 @@ void DeepPot::load_data_from_pb(std::string graph_path) {
 
 #endif
 
-inline void table_convert(FPTYPE** &_in_table, int _ntypes) {
+void DeepPot::table_convert(FPTYPE** &_in_table, int _ntypes) {
 #ifndef HIGH_PREC
-  FPTYPE * _table = new FPTYPE[1360 * 768];
   // printf("table_convert _ntypes %d \n", _ntypes);
+  FPTYPE * _table; 
+
+  if(comm->tabulate_flag == 5) {
+    _table = new FPTYPE[1360 * 768];
+  } else {
+    _table = new FPTYPE[136000 * 256];
+  }
 
   // print_v(768, "table 0", _in_table[0]);
 
   for(int ptr = 0; ptr < _ntypes * _ntypes; ptr++) {
-    memcpy(_table, _in_table[ptr], 1360 * 768 * sizeof(FPTYPE));
+    if(comm->tabulate_flag == 5) {
+      FPTYPE const lower   = c_table_info[0];
+      FPTYPE const upper   = c_table_info[1];
+      FPTYPE const _max    = c_table_info[2];
+      FPTYPE const stride0 = c_table_info[3];
+      FPTYPE const stride1 = c_table_info[4];
 
-    for(int table_idx = 0; table_idx < 1360; table_idx++) {
-      for (int kbs = 0; kbs < last_layer_size; kbs+=32) {
-        const FPTYPE *table0_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 0];
-        const FPTYPE *table1_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 1];
-        const FPTYPE *table2_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 2];
-        const FPTYPE *table3_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 3];
-        const FPTYPE *table4_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 4];
-        const FPTYPE *table5_0_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 5];
+      int total = (upper - lower) / stride0 + (_max - upper) / stride1;
 
-        const FPTYPE *table0_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 6];
-        const FPTYPE *table1_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 7];
-        const FPTYPE *table2_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 8];
-        const FPTYPE *table3_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 9];
-        const FPTYPE *table4_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 10];
-        const FPTYPE *table5_1_fp64 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + 16 * 11];
+      memcpy(_table, _in_table[ptr], 1360 * 768 * sizeof(FPTYPE));
 
-        FPTYPE *table0_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 0];
-        FPTYPE *table1_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 1];
-        FPTYPE *table2_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 2];
-        FPTYPE *table3_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 3];
-        FPTYPE *table4_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 4];
-        FPTYPE *table5_fp32 = &_in_table[ptr][table_idx * last_layer_size * 6 + kbs * 6 + 32 * 5];
+      int N = total, C = 8, H = 6, W = 16;
+      for(int n = 0; n < N; n++) {
+        for (int c = 0; c < C; ++c) {
+          for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+              // 原索引：input[n, c, h, w]
+              int old_idx = ((n * C + c) * H + h) * W + w;
+              // 目标索引：output[n, c, w, h]
+              int new_idx = ((n * C + c) * W + w) * H + h;
+              _in_table[ptr][new_idx] = _table[old_idx];
+            }
+          }
+        }
+      }
+      memcpy(_table, _in_table[ptr], 1360 * 768 * sizeof(FPTYPE));
+      N = total, C = 4, H = 32, W = 6;
+      for(int n = 0; n < N; n++) {
+        for (int c = 0; c < C; ++c) {
+          for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+              // 原索引：input[n, c, h, w]
+              int old_idx = ((n * C + c) * H + h) * W + w;
+              // 目标索引：output[n, c, w, h]
+              int new_idx = ((n * C + c) * W + w) * H + h;
+              _in_table[ptr][new_idx] = _table[old_idx];
+            }
+          }
+        }
+      }
 
-        for(int kk = 0; kk < 32; kk++) {
-          if(kk < 16) {
-            table0_fp32[kk] = table0_0_fp64[kk];
-            table1_fp32[kk] = table1_0_fp64[kk];
-            table2_fp32[kk] = table2_0_fp64[kk];
-            table3_fp32[kk] = table3_0_fp64[kk];
-            table4_fp32[kk] = table4_0_fp64[kk];
-            table5_fp32[kk] = table5_0_fp64[kk];
-          } else {
-            table0_fp32[kk] = table0_1_fp64[(kk - 16)];
-            table1_fp32[kk] = table1_1_fp64[(kk - 16)];
-            table2_fp32[kk] = table2_1_fp64[(kk - 16)];
-            table3_fp32[kk] = table3_1_fp64[(kk - 16)];
-            table4_fp32[kk] = table4_1_fp64[(kk - 16)];
-            table5_fp32[kk] = table5_1_fp64[(kk - 16)];
+    } else {
+      FPTYPE const lower   = c_table_info[0];
+      FPTYPE const upper   = c_table_info[1];
+      FPTYPE const _max    = c_table_info[2];
+      FPTYPE const stride0 = c_table_info[3];
+      FPTYPE const stride1 = c_table_info[4];
+
+      int total = (upper - lower) / stride0 + (_max - upper) / stride1;
+
+      memcpy(_table, _in_table[ptr], total * 256 * sizeof(FPTYPE));
+
+      int N = total, C = 4, H = 32, W = 2;
+      for(int n = 0; n < N; n++) {
+        for (int c = 0; c < C; ++c) {
+          for (int h = 0; h < H; ++h) {
+            for (int w = 0; w < W; ++w) {
+              // 原索引：input[n, c, h, w]
+              int old_idx = ((n * C + c) * H + h) * W + w;
+              // 目标索引：output[n, c, w, h]
+              int new_idx = ((n * C + c) * W + w) * H + h;
+              _in_table[ptr][new_idx] = _table[old_idx];
+            }
           }
         }
       }
@@ -492,9 +524,80 @@ inline void table_convert(FPTYPE** &_in_table, int _ntypes) {
 
   // print_v(768, "table 0", _in_table[0]);
 
+  delete[] _table;
 
-  // delete _table;
+  #if 0
+  if(comm->me == 0) {
+    PB_param_type1 pb_param_type1;
+    std::ifstream ifs("/vol0001/hp230257/lijianxiong/test_sc25/lammps_ring_lb/src/BIN_deepmd_copper/pb_data_copper.dat", std::ios::in | std::ios::binary);
+    ifs.read((char*)&pb_param_type1 , sizeof(PB_param_type1));
+    ifs.close();
 
+    _table = new FPTYPE[1360 * 768];
+
+    PB_param_type4 *pb_param_type4 = new PB_param_type4;
+    std::ifstream ifs1("/vol0001/hp230257/lijianxiong/test_sc25/lammps_ring_lb/src/BIN_deepmd_copper/pb_data_copper_v0001.dat", std::ios::in | std::ios::binary);
+    ifs1.read((char*)pb_param_type4 , sizeof(PB_param_type4));
+    ifs1.close();
+
+
+    for(int i = 0; i < 2048*240; i++) pb_param_type4->c_matrix_0[i] = pb_param_type1.c_matrix_0[i];
+    for(int i = 0; i < 240*240; i++) pb_param_type4->c_matrix_1[i] = pb_param_type1.c_matrix_1[i];
+    for(int i = 0; i < 240*240; i++) pb_param_type4->c_matrix_2[i] = pb_param_type1.c_matrix_2[i];
+    for(int i = 0; i < 240*1; i++) pb_param_type4->c_matrix_3[i] = pb_param_type1.c_matrix_3[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_bias_0[i] = pb_param_type1.c_bias_0[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_bias_1[i] = pb_param_type1.c_bias_1[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_bias_2[i] = pb_param_type1.c_bias_2[i];
+    for(int i = 0; i < 1; i++) pb_param_type4->c_bias_3[i] = pb_param_type1.c_bias_3[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_idt_0[i] = pb_param_type1.c_idt_0[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_idt_1[i] = pb_param_type1.c_idt_1[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_idt_2[i] = pb_param_type1.c_idt_2[i];
+    for(int i = 0; i < 240; i++) pb_param_type4->c_idt_3[i] = pb_param_type1.c_idt_3[i];
+    // for(int i = 0; i < 1360*768; i++) pb_param_type4->c_table[i] = pb_param_type1.c_table[i];
+    for(int i = 0; i < 6; i++) pb_param_type4->c_table_info[i] = pb_param_type1.c_table_info[i];
+    for(int i = 0; i < 2048; i++) pb_param_type4->std_ones[i] = pb_param_type1.std_ones[i];
+    for(int i = 0; i < 2048; i++) pb_param_type4->avg_zero[i] = pb_param_type1.avg_zero[i];
+
+    int N = 1360, C = 8, H = 6, W = 16;
+    for(int n = 0; n < N; n++) {
+      for (int c = 0; c < C; ++c) {
+        for (int h = 0; h < H; ++h) {
+          for (int w = 0; w < W; ++w) {
+            // 原索引：input[n, c, h, w]
+            int old_idx = ((n * C + c) * H + h) * W + w;
+            // 目标索引：output[n, c, w, h]
+            int new_idx = ((n * C + c) * W + w) * H + h;
+            _table[new_idx] = pb_param_type1.c_table[old_idx];
+          }
+        }
+      }
+    }
+
+    for(int n = 0; n < N; n++) {
+      for(int c = 0; c < 100; c++) {
+        for(int h = 0; h < 128; h++) {
+          int old_idx = n * 768 + h * 6;
+          int new_idx = (n * 100 + c) * 256 + h * 2;
+          pb_param_type4->c_table[new_idx]    = _table[old_idx];
+          pb_param_type4->c_table[new_idx+1]  = _table[old_idx+1];
+        }
+      }
+    }
+
+    FILE * fp;
+    if((fp = fopen ("pb_data_copper_v0001_t.dat","wb"))==NULL)  {
+      error->all(FLERR, "fp open fail \n");
+    }
+  
+    if(fwrite(pb_param_type4,sizeof(PB_param_type4),1,fp)!=1) {
+      error->all(FLERR, "file write error \n");
+    }
+
+    fclose(fp);
+
+    delete _table;
+  }
+  #endif
 #endif
 }
 
@@ -534,7 +637,6 @@ void DeepPot::init_value() {
   //     }
   //   }
   // }
-  
 }
 
 void DeepPot::reserve_buffer(int _max_atoms, int _nall) {
@@ -573,9 +675,9 @@ void DeepPot::reserve_buffer(int _max_atoms, int _nall) {
   }
   d_nlist_size = new int[_max_atoms];   memset(d_nlist_size, 0, _max_atoms * sizeof(int)); 
 
-  sel_nei = new uint64_t[max_all_nei];     memset(sel_nei, 0, max_all_nei * sizeof(uint64_t)); 
+  // sel_nei = new uint64_t[max_all_nei];     memset(sel_nei, 0, max_all_nei * sizeof(uint64_t)); 
   sel_nei_size = 0;
-  // sel_nei = new NeighborInfo[max_all_nei]; memset(sel_nei, 0, max_all_nei*sizeof(NeighborInfo));
+  sel_nei = new NeighborInfo[max_all_nei]; memset(sel_nei, 0, max_all_nei*sizeof(NeighborInfo));
 
 
   nei_num_v = new int[ntypes+1];        memset(nei_num_v, 0, (ntypes+1) * sizeof(int)); 
@@ -614,6 +716,8 @@ void DeepPot::reserve_buffer(int _max_atoms, int _nall) {
   layer_2_grad = new FPTYPE[_max_atoms * n_neuron[2]];      memset(layer_2_grad, 0, sizeof(FPTYPE)* _max_atoms * n_neuron[2]    );
   layer_1_grad_reg = new FPTYPE[_max_atoms * n_neuron[1]];  memset(layer_1_grad_reg, 0, sizeof(FPTYPE)* _max_atoms * n_neuron[1]);
   layer_2_grad_reg = new FPTYPE[_max_atoms * n_neuron[2]];  memset(layer_2_grad_reg, 0, sizeof(FPTYPE)* _max_atoms * n_neuron[2]);
+
+  gemm_fp16_buf = new float16_t[_max_atoms * (n_neuron[0] + dim_descrpt)];  memset(gemm_fp16_buf, 0, sizeof(float16_t)* _max_atoms * (n_neuron[0] + dim_descrpt));
 
   xyz_scatter_1_grad = new FPTYPE[_max_atoms * last_layer_size * 4];  memset(xyz_scatter_1_grad, 0, sizeof(FPTYPE)* _max_atoms * last_layer_size * 4);
   xyz_scatter_2_grad = new FPTYPE[_max_atoms * n_axis_neuron * 4];    memset(xyz_scatter_2_grad, 0, sizeof(FPTYPE)* _max_atoms * n_axis_neuron * 4);
@@ -687,11 +791,16 @@ void DeepPot::init(DeepPot *_deep_pot, int _tid) {
   max_nnei = _deep_pot->max_nnei;
   max_all_nei = _deep_pot->max_all_nei;
 
+
+  // #ifdef _TABULATE_FITTING
+  //   table_fitting = _deep_pot->table_fitting;
+  // #endif
+
   init_value();
 }
 
 void DeepPot::store_pb_data() {
-  if(ntypes == 1) {
+  if(ntypes == 1 && comm->tabulate_flag == 5) {
     PB_param_type1 pb_param_type1;
 
     if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] begin store_pb_data\n"));
@@ -711,6 +820,7 @@ void DeepPot::store_pb_data() {
     if(c_idt[2][0]   ) memcpy(pb_param_type1.c_idt_2,      c_idt[2][0],        240 * sizeof(double));
     // if(c_idt[3][0]   ) memcpy(pb_param_type1.c_idt_3,      c_idt[3][0],        240 * sizeof(double));
     if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_idt\n"));
+
     if(c_table[0]    ) memcpy(pb_param_type1.c_table,      c_table[0],         1360*768 * sizeof(double));
     if(c_table_info  ) memcpy(pb_param_type1.c_table_info, c_table_info,       6 * sizeof(double));
     if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_table_info\n"));
@@ -729,8 +839,46 @@ void DeepPot::store_pb_data() {
     }
 
     fclose(fp);
-  }
-  else if(ntypes == 2) {
+  } else if(ntypes == 1 && comm->tabulate_flag == 1) {
+    PB_param_type4 pb_param_type4;
+
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] begin store_pb_data\n"));
+
+    if(c_matrix[0][0]) memcpy(pb_param_type4.c_matrix_0,   c_matrix[0][0],     2048*240 * sizeof(float));
+    if(c_matrix[1][0]) memcpy(pb_param_type4.c_matrix_1,   c_matrix[1][0],     240*240 * sizeof(float));
+    if(c_matrix[2][0]) memcpy(pb_param_type4.c_matrix_2,   c_matrix[2][0],     240*240 * sizeof(float));
+    if(c_matrix[3][0]) memcpy(pb_param_type4.c_matrix_3,   c_matrix[3][0],     240*1 * sizeof(float));
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_matrix\n"));
+    if(c_bias[0][0]  ) memcpy(pb_param_type4.c_bias_0,     c_bias[0][0],       240 * sizeof(float));
+    if(c_bias[1][0]  ) memcpy(pb_param_type4.c_bias_1,     c_bias[1][0],       240 * sizeof(float));
+    if(c_bias[2][0]  ) memcpy(pb_param_type4.c_bias_2,     c_bias[2][0],       240 * sizeof(float));
+    if(c_bias[3][0]  ) memcpy(pb_param_type4.c_bias_3,     c_bias[3][0],       1 * sizeof(float));
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_bias\n"));
+    // if(c_idt[0][0]   ) memcpy(pb_param_type4.c_idt_0,      c_idt[0][0],        240 * sizeof(float));
+    if(c_idt[1][0]   ) memcpy(pb_param_type4.c_idt_1,      c_idt[1][0],        240 * sizeof(float));
+    if(c_idt[2][0]   ) memcpy(pb_param_type4.c_idt_2,      c_idt[2][0],        240 * sizeof(float));
+    // if(c_idt[3][0]   ) memcpy(pb_param_type4.c_idt_3,      c_idt[3][0],        240 * sizeof(float));
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_idt\n"));
+
+    if(c_table[0]    ) memcpy(pb_param_type4.c_table,      c_table[0],         136000*256 * sizeof(float));
+    if(c_table_info  ) memcpy(pb_param_type4.c_table_info, c_table_info,       6 * sizeof(float));
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_table_info\n"));
+    if(std_ones      ) memcpy(pb_param_type4.std_ones,     std_ones,           2048 * sizeof(float));
+    if(avg_zero      ) memcpy(pb_param_type4.avg_zero,     avg_zero,           2048 * sizeof(float));
+
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy store_pb_data\n"));
+
+    FILE * fp;
+    if((fp = fopen ("pb_data_copper_v0001.dat","wb"))==NULL)  {
+      error->all(FLERR, "fp open fail \n");
+    }
+  
+    if(fwrite(&pb_param_type4,sizeof(pb_param_type4),1,fp)!=1) {
+      error->all(FLERR, "file write error \n");
+    }
+
+    fclose(fp);
+  } else if(ntypes == 2 && comm->tabulate_flag == 5) {
     PB_param_type2 pb_param_type2;
 
     if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] begin store_pb_data\n"));
@@ -772,11 +920,54 @@ void DeepPot::store_pb_data() {
     }
 
     fclose(fp);
-  }
+  } else if(ntypes == 2 && comm->tabulate_flag == 1){
+    PB_param_type3 pb_param_type3;
+
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] begin store_pb_data\n"));
+    for(int ii = 0; ii < ntypes; ii++) {
+      if(c_matrix[0][ii]) memcpy(pb_param_type3.c_matrix_0[ii],   c_matrix[0][ii],     2048*240 * sizeof(float));
+      if(c_matrix[1][ii]) memcpy(pb_param_type3.c_matrix_1[ii],   c_matrix[1][ii],     240*240 * sizeof(float));
+      if(c_matrix[2][ii]) memcpy(pb_param_type3.c_matrix_2[ii],   c_matrix[2][ii],     240*240 * sizeof(float));
+      if(c_matrix[3][ii]) memcpy(pb_param_type3.c_matrix_3[ii],   c_matrix[3][ii],     240*1 * sizeof(float));
+      // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_matrix\n"));
+      if(c_bias[0][ii]  ) memcpy(pb_param_type3.c_bias_0[ii],     c_bias[0][ii],       240 * sizeof(float));
+      if(c_bias[1][ii]  ) memcpy(pb_param_type3.c_bias_1[ii],     c_bias[1][ii],       240 * sizeof(float));
+      if(c_bias[2][ii]  ) memcpy(pb_param_type3.c_bias_2[ii],     c_bias[2][ii],       240 * sizeof(float));
+      if(c_bias[3][ii]  ) memcpy(pb_param_type3.c_bias_3[ii],     c_bias[3][ii],       1 * sizeof(float));
+      // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_bias\n"));
+      // if(c_idt[0][ii]   ) memcpy(pb_param_type3.c_idt_0[ii],      c_idt[0][ii],        240 * sizeof(float));
+      if(c_idt[1][ii]   ) memcpy(pb_param_type3.c_idt_1[ii],      c_idt[1][ii],        240 * sizeof(float));
+      if(c_idt[2][ii]   ) memcpy(pb_param_type3.c_idt_2[ii],      c_idt[2][ii],        240 * sizeof(float));
+      // if(c_idt[3][ii]   ) memcpy(pb_param_type3.c_idt_3[ii],      c_idt[3][ii],        240 * sizeof(float));
+    }
+    if(std_ones      ) memcpy(pb_param_type3.std_ones,     std_ones,           2*552 * sizeof(float));
+    if(avg_zero      ) memcpy(pb_param_type3.avg_zero,     avg_zero,           2*552 * sizeof(float));
+    // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_idt\n"));
+    if(c_table_info  ) memcpy(pb_param_type3.c_table_info, c_table_info,       6 * sizeof(float));
+
+    for(int ii = 0; ii < ntypes*ntypes; ii++) {
+      if(c_table[ii]    ) memcpy(pb_param_type3.c_table[ii],      c_table[ii],         136000*256 * sizeof(float));
+    }
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy c_table_info\n"));
+
+    if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] finish memcpy store_pb_data\n"));
+
+    FILE * fp;
+    if((fp = fopen ("pb_data_water_v0001.dat","wb"))==NULL)  {
+      error->all(FLERR, "fp open fail \n");
+    }
+  
+    if(fwrite(&pb_param_type3,sizeof(pb_param_type3),1,fp)!=1) {
+      error->all(FLERR, "file write error \n");
+    }
+
+    fclose(fp);
+
+  }  
 }
 
 void DeepPot::load_data_from_dat(std::string graph_path) {
-  if(ntypes == 1) {
+  if(ntypes == 1 && comm->tabulate_flag == 5) {
     PB_param_type1 pb_param_type1;
 
     if(comm->me == 0) {
@@ -813,9 +1004,44 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
     c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type1.c_table_info[i];
     std_ones       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     std_ones[i]       = (FPTYPE)pb_param_type1.std_ones[i];
     avg_zero       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     avg_zero[i]       = (FPTYPE)pb_param_type1.avg_zero[i];
-
     
-  } else if (ntypes == 2) {
+  } else if (ntypes == 1 && comm->tabulate_flag == 1) {
+    PB_param_type4 *pb_param_type4 = new PB_param_type4;
+
+    if(comm->me == 0) {
+      // std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
+      std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
+      ifs.read((char*)pb_param_type4 , sizeof(PB_param_type4));
+      ifs.close();
+
+      if(DEBUG_MSG) utils::logmesg(lmp, "[NUMA] load_data_from_dat graph_path {} \n", graph_path);
+
+      MPI_Bcast((char*)pb_param_type4, sizeof(PB_param_type4), MPI_CHAR, 0, world);
+    } else {
+      MPI_Bcast((char*)pb_param_type4, sizeof(PB_param_type4), MPI_CHAR, 0, world);
+    }
+
+    c_matrix[0][0] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][0][i] = (FPTYPE)pb_param_type4->c_matrix_0[i];
+    c_matrix[1][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][0][i] = (FPTYPE)pb_param_type4->c_matrix_1[i];
+    c_matrix[2][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][0][i] = (FPTYPE)pb_param_type4->c_matrix_2[i];
+    c_matrix[3][0] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][0][i] = (FPTYPE)pb_param_type4->c_matrix_3[i];
+    c_bias[0][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][0][i]   = (FPTYPE)pb_param_type4->c_bias_0[i];
+    c_bias[1][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][0][i]   = (FPTYPE)pb_param_type4->c_bias_1[i];
+    c_bias[2][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][0][i]   = (FPTYPE)pb_param_type4->c_bias_2[i];
+    c_bias[3][0]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][0][i]   = (FPTYPE)pb_param_type4->c_bias_3[i];
+    c_idt[0][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][0][i]    = (FPTYPE)pb_param_type4->c_idt_0[i];
+    c_idt[1][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][0][i]    = (FPTYPE)pb_param_type4->c_idt_1[i];
+    c_idt[2][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][0][i]    = (FPTYPE)pb_param_type4->c_idt_2[i];
+    c_idt[3][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][0][i]    = (FPTYPE)pb_param_type4->c_idt_3[i];
+    c_table[0]     = new FPTYPE[136000*256];  for(int i = 0; i < 136000*256; i++) c_table[0][i]   = (FPTYPE)pb_param_type4->c_table[i];
+    // c_table[0]     = new FPTYPE[136000*256];  for(int i = 0; i < 136000*256; i++) c_table[0][i]   = (FPTYPE) i * 0.01;
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type4->c_table_info[i];
+    std_ones       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     std_ones[i]       = (FPTYPE)pb_param_type4->std_ones[i];
+    avg_zero       = new FPTYPE[2048]    ;    for(int i = 0; i < 2048; i++)     avg_zero[i]       = (FPTYPE)pb_param_type4->avg_zero[i];
+
+    delete pb_param_type4;
+
+  } else if (ntypes == 2 && comm->tabulate_flag == 5) {
     PB_param_type2 pb_param_type2;
 
     if(comm->me == 0) {
@@ -855,8 +1081,48 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
     c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_param_type2.c_table_info[i];
 
     for(int type_i = 0; type_i < ntypes*ntypes; type_i++) {
-      c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_param_type2.c_table[type_i][i];
+      if(comm->tabulate_flag == 1)  {c_table[type_i]     = new FPTYPE[13600*256];    for(int i = 0; i < 13600*256; i++) c_table[type_i][i]     = i*i*(type_i + 1);}
+      else                          {c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_param_type2.c_table[type_i][i];}
     }
+  } else if (ntypes == 2 && comm->tabulate_flag == 1) {
+    PB_param_type3 *pb_param_type3 = new PB_param_type3;
+
+    if(comm->me == 0) {
+      // std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
+      std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
+      ifs.read((char*)pb_param_type3 , sizeof(PB_param_type3));
+      ifs.close();
+
+      if(DEBUG_MSG) utils::logmesg(lmp, "[NUMA] load_data_from_dat graph_path {} \n", graph_path);
+
+      MPI_Bcast((char*)pb_param_type3, sizeof(PB_param_type3), MPI_CHAR, 0, world);
+    } else {
+      MPI_Bcast((char*)pb_param_type3, sizeof(PB_param_type3), MPI_CHAR, 0, world);
+    }
+
+    for(int type_i = 0; type_i < ntypes; type_i++) {
+      c_matrix[0][type_i] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][type_i][i] = (FPTYPE)pb_param_type3->c_matrix_0[type_i][i];
+      c_matrix[1][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][type_i][i] = (FPTYPE)pb_param_type3->c_matrix_1[type_i][i];
+      c_matrix[2][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][type_i][i] = (FPTYPE)pb_param_type3->c_matrix_2[type_i][i];
+      c_matrix[3][type_i] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][type_i][i] = (FPTYPE)pb_param_type3->c_matrix_3[type_i][i];
+      c_bias[0][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][type_i][i]   = (FPTYPE)pb_param_type3->c_bias_0[type_i][i];
+      c_bias[1][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][type_i][i]   = (FPTYPE)pb_param_type3->c_bias_1[type_i][i];
+      c_bias[2][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][type_i][i]   = (FPTYPE)pb_param_type3->c_bias_2[type_i][i];
+      c_bias[3][type_i]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][type_i][i]   = (FPTYPE)pb_param_type3->c_bias_3[type_i][i];
+      c_idt[0][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][type_i][i]    = (FPTYPE)pb_param_type3->c_idt_0[type_i][i];
+      c_idt[1][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][type_i][i]    = (FPTYPE)pb_param_type3->c_idt_1[type_i][i];
+      c_idt[2][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][type_i][i]    = (FPTYPE)pb_param_type3->c_idt_2[type_i][i];
+      c_idt[3][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][type_i][i]    = (FPTYPE)pb_param_type3->c_idt_3[type_i][i];
+    }
+
+    std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     std_ones[i]       = (FPTYPE)pb_param_type3->std_ones[i];
+    avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     avg_zero[i]       = (FPTYPE)pb_param_type3->avg_zero[i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)         c_table_info[i]   = (FPTYPE)pb_param_type3->c_table_info[i];
+
+    for(int type_i = 0; type_i < ntypes*ntypes; type_i++) {
+      c_table[type_i]     = new FPTYPE[136000*256];    for(int i = 0; i < 136000*256; i++) c_table[type_i][i]     = (FPTYPE)pb_param_type3->c_table[type_i][i];
+    }
+    delete pb_param_type3;
   }
 
   int matrix_size[4][2] = {{dim_descrpt, n_neuron[0]},
@@ -963,10 +1229,13 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
     error->all(FLERR,"Illegal graph_path");
   }
  
-  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO]load data success \n"));
-  // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] PB_param_type1 (size {} )\n", sizeof(PB_param_type1)));
-
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] load data success \n"));
+  
   // if(comm->me == 0) store_pb_data();
+  // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] save data success \n"));
+
+  // if(tid == 0) MPI_Barrier(MPI_COMM_WORLD);
+  // if(tid == 0) MPI_Finalize();
 
   max_nnei = 0;
   for(auto i : sel) if(i > max_nnei) max_nnei = i;
@@ -974,6 +1243,13 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
 
   table_convert(c_table, ntypes);
   init_value();
+
+  for(int i = 0; i < ntypes * nem; i++) {
+    std_ones[i] = 1./std_ones[i];
+  }
+
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] table_info  : {} {} {} {} {} {} \n", c_table_info[0], c_table_info[1],
+        c_table_info[2], c_table_info[3],c_table_info[4], c_table_info[5]));
 }
 
 void DeepPot::compute (ENERGYTYPE &			dener_,
@@ -1092,14 +1368,14 @@ void DeepPot::session_run () {
   
   // 每种类型原子的邻居数量
 
-  // t_timer->stamp();
+  t_timer->stamp();
   prod_env_mat_a();
   // return;
 
   // lmp->parral_barrier(12, tid);
   // if(DEBUG_MSG)  if(tid == 0) utils::logmesg(lmp, "finish prod_env_mat_a \n");
 
-  // t_timer->stamp(Timer::PROD_ENV);
+  t_timer->stamp(Timer::PROD_ENV);
 
   // 提取每一个原子的邻居项，进行查表
   int start_index = 0;
@@ -1140,23 +1416,31 @@ void DeepPot::session_run () {
 
       // printf("xyz_scatter[t_ptr].size %d\n", xyz_scatter[t_ptr].size());
       // printf("inputs_i_in[t_ptr].size %d\n", inputs_i_in[t_ptr].size());
-      tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter[t_ptr], inputs_i_in[t_ptr], tmp_xyz_scatter, c_table[t_ptr]);
+      if(comm->tabulate_flag == 5) {
+        tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter[t_ptr], inputs_i_in[t_ptr], tmp_xyz_scatter, c_table[t_ptr]);
+        // tabulateFusion(type_natoms[type_i], sel[type_i_in], xyz_scatter[t_ptr], inputs_i_in[t_ptr], tmp_xyz_scatter, c_table[t_ptr]);
+      } else if(comm->tabulate_flag == 1) {
+        tabulateFusion_v1_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter[t_ptr], inputs_i_in[t_ptr], tmp_xyz_scatter, c_table[t_ptr]);
+      }
+
       // tabulateFusion(type_natoms[type_i], sel[type_i_in], xyz_scatter[t_ptr], inputs_i_in[t_ptr], tmp_xyz_scatter, c_table[t_ptr]);
 
        if(DEBUG_MSG)  if(tid == 0) print_v(sel[type_i_in], fmt::format(" tabluate out xyz_scatter[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), xyz_scatter[t_ptr]);
        if(DEBUG_MSG)  if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format(" tabluate out inputs_i_in[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), inputs_i_in[t_ptr]);
-       if(DEBUG_MSG)  if(tid == 0) print_v(768, fmt::format(" tabluate out c_table[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), c_table[t_ptr]);
+      //  if(DEBUG_MSG)  if(tid == 0) print_v(768, fmt::format(" tabluate out c_table[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), c_table[t_ptr]);
        if(DEBUG_MSG)  if(tid == 0) print_v(last_layer_size * 4, fmt::format(" tabluate out tmp_xyz_scatter type_i {} type_i_in {}", type_i, type_i_in), tmp_xyz_scatter);
       if(DEBUG_MSG)  if(tid == 0) printf("\n\n");
       // start_index_in = sel[type_i_in];
     }
+
+    
     // start_index = type_natoms[type_i];
     
     for(int _i = 0; _i < type_natoms[type_i] * 4 * last_layer_size; _i++) {
       xyz_scatter_1[type_i][_i] *= 4.0 / ndescrpt;
     }
 
-    // t_timer->stamp(Timer::TABULATE);
+    t_timer->stamp(Timer::TABULATE);
     // printf("atom 0 xyz_scatter_1[type_i] type_i %d :\n   ", type_i);
     // for(int _i = 0; _i < 4 * last_layer_size; _i++) {
     //     printf("%0.6f ", xyz_scatter_1[type_i][_i]);
@@ -1177,7 +1461,7 @@ void DeepPot::session_run () {
     memset(xyz_scatter_mul, 0, sizeof(FPTYPE) * type_natoms[type_i] * last_layer_size * n_axis_neuron);
 
     matmul_3d(type_natoms[type_i], last_layer_size, n_axis_neuron, 4, xyz_scatter_1[type_i], xyz_scatter_2[type_i], xyz_scatter_mul, true, false);
-    // t_timer->stamp(Timer::EM_MUT_3D);
+    t_timer->stamp(Timer::EM_MUT_3D);
 
     if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size * n_axis_neuron, fmt::format("xyz_scatter_mul type_i {}\n",type_i ), xyz_scatter_mul);
 
@@ -1191,6 +1475,7 @@ void DeepPot::session_run () {
   fitting_net();
 
   if(DEBUG_MSG) if(tid == 0)  print_v(nloc * 3, fmt::format("dforce \n"), dforce);
+  // if(tid == 0)  print_v_full(nall * 3, fmt::format("dforce \n"), dforce);
   // print_v(9, fmt::format("dvirial \nn"), dvirial.data());
   // printf("ener %f\n", dener);
 
@@ -1201,12 +1486,11 @@ void DeepPot::session_run () {
 void DeepPot::fitting_net() {
 
   // fitting net forward and backward
-  int start_index = 0;
 
   for(int type_i = 0; type_i < ntypes; type_i++) {
     if(type_natoms[type_i] == 0) continue;
 
-    // t_timer->stamp();
+    t_timer->stamp();
     FPTYPE* inputs_i = dout_tabulate[type_i];
 
     // memset(inputs_i_grad, 0, type_natoms[type_i] * dim_descrpt * sizeof(FPTYPE));
@@ -1231,131 +1515,167 @@ void DeepPot::fitting_net() {
     // t_timer->stamp(Timer::MATMUL_ADD_0);
     // matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
 
-    #ifdef T_FLOAT_16
-    if(comm->fp16_flag){
-      if(type_natoms[type_i] <= 3){
-        matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0);
-      }
-      else 
-       matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
-    } else {
-      matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
-    }
-    #else
-      matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
-    #endif
+    // #ifdef _TABULATE_FITTING
+    //   t_timer->stamp();
 
-    fast_tanh(type_natoms[type_i] * n_neuron[0], layer_0, layer_0_tanh);
-    // t_timer->stamp(Timer::FAST_TANH);
+    //   for(int ii = 0; ii < type_natoms[type_i]; ii++) {
+    //     float *_out_grad = &inputs_i_grad[ii * dim_descrpt];
+    //     float *_input    = &inputs_i[ii * dim_descrpt];
+    //     for(int jj = 0; jj < dim_descrpt; jj++) {
+    //       __fp16 __i = _input[jj];
+    //       unsigned int ptr = *(unsigned short*)&__i;
+    //       for(int kk = 0; kk < dim_descrpt; kk++) {
+    //         _out_grad[kk] += table_fitting[ptr * dim_descrpt + kk];
+    //       }
+    //     }
+    //   }
 
-    // layer_1
-    matmul(type_natoms[type_i], n_neuron[1], n_neuron[0],  layer_0_tanh,    c_matrix[1][type_i], c_bias[1][type_i], layer_1);
-    // t_timer->stamp(Timer::MATMUL_ADD_1);
-    // print_v(n_neuron[1], fmt::format("matmul_add layer1 type_i {}: ", type_i), layer_1);
-    fast_tanh(type_natoms[type_i] * n_neuron[1], layer_1, layer_1_tanh);
-    // t_timer->stamp(Timer::FAST_TANH);
-    // print_v(n_neuron[1], fmt::format("fast_tanh layer1 type_i {}: ", type_i), layer_1_tanh);
-    idt_mult(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_tanh, layer_1);    
-    // t_timer->stamp(Timer::IDT_MULT);
-    // print_v(n_neuron[1], fmt::format("idt_mult layer1 type_i {}: ", type_i), layer_1);
-    matrix_add(type_natoms[type_i], n_neuron[1], layer_0_tanh, layer_1);
-    // t_timer->stamp(Timer::MATRIX_ADD);
-    // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_1);
+    //   t_timer->stamp(Timer::FIT_SLICE);
 
-    // layer_2
-    matmul(type_natoms[type_i], n_neuron[2], n_neuron[1],  layer_1,    c_matrix[2][type_i], c_bias[2][type_i], layer_2);
-    // t_timer->stamp(Timer::MATMUL_ADD_2);
-    // print_v(n_neuron[1], fmt::format("matmul_add layer2 type_i {}: ", type_i), layer_2);
-    fast_tanh(type_natoms[type_i] * n_neuron[2], layer_2, layer_2_tanh);
-    // t_timer->stamp(Timer::FAST_TANH);
 
-    if(update->ntimestep == output->next || update->ntimestep == 0) {
-      // print_v(n_neuron[1], fmt::format("fast_tanh layer2 type_i {}: ", type_i), layer_2_tanh);
-      idt_mult(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_tanh, layer_2);
-      // t_timer->stamp(Timer::IDT_MULT);
-      // print_v(n_neuron[1], fmt::format("idt_mult layer2 type_i {}: ", type_i), layer_2);
-
-      matrix_add(type_natoms[type_i], n_neuron[1], layer_1, layer_2);
-      // t_timer->stamp(Timer::MATRIX_ADD);
-      // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_2);
-
-      // layer_3
-      matmul(type_natoms[type_i], 1,            n_neuron[2],  layer_2,    c_matrix[3][type_i], c_bias[3][type_i], layer_f);
-      // printf("enner %0.6f\n", layer_f[0]); std::fflush(stdout);
-
-      for(int ii = 0; ii < type_natoms[type_i]; ii++) {
-        dener += layer_f[ii];
-      }
-      // t_timer->stamp(Timer::MATMUL_ADD_3);
-    }
-
-    // layer_3_grad
-    // matmul(type_natoms[type_i], n_neuron[2], 1, grad_f_data.data(), c_matrix_t[3][type_i], NULL, layer_2_grad_reg);
-    for(int ii = 0; ii < type_natoms[type_i]; ii++) {
-      memcpy(layer_2_grad_reg + ii * n_neuron[2], grad_f_data[type_i],  n_neuron[2]*sizeof(FPTYPE));
-    }
-    // t_timer->stamp(Timer::MATMUL_2D_1);
-    // print_v(n_neuron[2], fmt::format("final grad type_i {}: ", type_i), layer_2_grad_reg);
-
-    // layer_2_grad
-    idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
-    // t_timer->stamp(Timer::IDT_MULT_GRAD);
-    // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
-    fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
-    // t_timer->stamp(Timer::FAST_TANH_GRAD);
-    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
-    matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
-    // t_timer->stamp(Timer::MATMUL_2D_1);
-    // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
-
-    // if(DEBUG_MSG) if(tid == 0) print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
-
-    matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
-    // t_timer->stamp(Timer::MATRIX_ADD);
-    // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
-
-    // layer_1_grad_reg.assign(layer_1_grad.begin(), layer_1_grad.end());
-
-    // layer_1_grad
-    idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
-    // t_timer->stamp(Timer::IDT_MULT_GRAD);
-    // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
-    fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
-    // t_timer->stamp(Timer::FAST_TANH_GRAD);
-    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
-
-    matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
-    // t_timer->stamp(Timer::MATMUL_2D_2);
-    // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
-
-    matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
-    // t_timer->stamp(Timer::MATRIX_ADD);
-    // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
-
-    // layer_0_grad
-    fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
-    // t_timer->stamp(Timer::FAST_TANH_GRAD);
-    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
-
-    // matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
-
-    #ifdef T_FLOAT_16
+    // #else
+      // #ifdef T_FLOAT_16
+      // if(comm->fp16_flag){
+      //   if(type_natoms[type_i] <= 3){
+      //     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0);
+      //   }
+      //   else 
+      //   matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+      // } else {
+      //   matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+      // }
+      // #else
       if(comm->fp16_flag){
-        if(type_natoms[type_i] <= 3)
-          matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad);
-        else
-          matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
+        matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
+      } else {
+        matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+      }
+      // #endif
+
+      t_timer->stamp(Timer::MATMUL_ADD_0);
+
+      fast_tanh(type_natoms[type_i] * n_neuron[0], layer_0, layer_0_tanh);
+      t_timer->stamp(Timer::FAST_TANH);
+
+      // layer_1
+      matmul(type_natoms[type_i], n_neuron[1], n_neuron[0],  layer_0_tanh,    c_matrix[1][type_i], c_bias[1][type_i], layer_1);
+      t_timer->stamp(Timer::MATMUL_ADD_1);
+      // print_v(n_neuron[1], fmt::format("matmul_add layer1 type_i {}: ", type_i), layer_1);
+      fast_tanh(type_natoms[type_i] * n_neuron[1], layer_1, layer_1_tanh);
+      t_timer->stamp(Timer::FAST_TANH);
+      // print_v(n_neuron[1], fmt::format("fast_tanh layer1 type_i {}: ", type_i), layer_1_tanh);
+      idt_mult(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_tanh, layer_1);    
+      t_timer->stamp(Timer::IDT_MULT);
+      // print_v(n_neuron[1], fmt::format("idt_mult layer1 type_i {}: ", type_i), layer_1);
+      matrix_add(type_natoms[type_i], n_neuron[1], layer_0_tanh, layer_1);
+      t_timer->stamp(Timer::MATRIX_ADD);
+      // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_1);
+
+      // layer_2
+      matmul(type_natoms[type_i], n_neuron[2], n_neuron[1],  layer_1,    c_matrix[2][type_i], c_bias[2][type_i], layer_2);
+      t_timer->stamp(Timer::MATMUL_ADD_2);
+      // print_v(n_neuron[1], fmt::format("matmul_add layer2 type_i {}: ", type_i), layer_2);
+      fast_tanh(type_natoms[type_i] * n_neuron[2], layer_2, layer_2_tanh);
+      t_timer->stamp(Timer::FAST_TANH);
+
+      if(update->ntimestep == output->next || update->ntimestep == 0) {
+        // print_v(n_neuron[1], fmt::format("fast_tanh layer2 type_i {}: ", type_i), layer_2_tanh);
+        idt_mult(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_tanh, layer_2);
+        t_timer->stamp(Timer::IDT_MULT);
+        // print_v(n_neuron[1], fmt::format("idt_mult layer2 type_i {}: ", type_i), layer_2);
+
+        matrix_add(type_natoms[type_i], n_neuron[1], layer_1, layer_2);
+        t_timer->stamp(Timer::MATRIX_ADD);
+        // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_2);
+
+        // layer_3
+        matmul(type_natoms[type_i], 1,            n_neuron[2],  layer_2,    c_matrix[3][type_i], c_bias[3][type_i], layer_f);
+
+        if(DEBUG_MSG) if(tid == 0) print_v(type_natoms[type_i], fmt::format("layer_f type_{}: ", type_i), layer_f);
+
+        // printf("enner %0.6f\n", layer_f[0]); std::fflush(stdout);
+
+        for(int ii = 0; ii < type_natoms[type_i]; ii++) {
+          dener += layer_f[ii];
+        }
+        t_timer->stamp(Timer::MATMUL_ADD_3);
+      }
+
+      // layer_3_grad
+      // matmul(type_natoms[type_i], n_neuron[2], 1, grad_f_data.data(), c_matrix_t[3][type_i], NULL, layer_2_grad_reg);
+      for(int ii = 0; ii < type_natoms[type_i]; ii++) {
+        memcpy(layer_2_grad_reg + ii * n_neuron[2], grad_f_data[type_i],  n_neuron[2]*sizeof(FPTYPE));
+      }
+      t_timer->stamp(Timer::MATMUL_2D_1);
+      // print_v(n_neuron[2], fmt::format("final grad type_i {}: ", type_i), layer_2_grad_reg);
+
+      // layer_2_grad
+      idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
+      t_timer->stamp(Timer::IDT_MULT_GRAD);
+      // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
+      fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
+      t_timer->stamp(Timer::FAST_TANH_GRAD);
+      // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
+      matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
+      t_timer->stamp(Timer::MATMUL_2D_1);
+      // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
+
+      // if(DEBUG_MSG) if(tid == 0) print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
+
+      matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
+      t_timer->stamp(Timer::MATRIX_ADD);
+      // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
+
+      // layer_1_grad_reg.assign(layer_1_grad.begin(), layer_1_grad.end());
+
+      // layer_1_grad
+      idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
+      t_timer->stamp(Timer::IDT_MULT_GRAD);
+      // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
+      fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
+      t_timer->stamp(Timer::FAST_TANH_GRAD);
+      // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
+
+      matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
+      t_timer->stamp(Timer::MATMUL_2D_2);
+      // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
+
+      matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
+      t_timer->stamp(Timer::MATRIX_ADD);
+      // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
+
+      // layer_0_grad
+      fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
+      t_timer->stamp(Timer::FAST_TANH_GRAD);
+      // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
+
+      // matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
+
+      // #ifdef T_FLOAT_16
+      //   if(comm->fp16_flag){
+      //     if(type_natoms[type_i] <= 3)
+      //       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad);
+      //     else
+      //       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
+      //   } else {
+      //     matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
+      //   }
+      // #else 
+
+      #pragma omp barrier
+
+      if(comm->fp16_flag){
+        matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad, gemm_fp16_buf);
       } else {
         matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
       }
-    #else 
-      matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
-    #endif
+      // #endif
+    // #endif
 
     // if(DEBUG_MSG) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("inputs_i_grad * 4 type_{}: ", type_i), inputs_i_grad);
 
 
-    // t_timer->stamp(Timer::MATMUL_2D_3);
+    t_timer->stamp(Timer::MATMUL_2D_3);
 
     // xyz_scatter_1_grad.resize(type_natoms[type_i] * last_layer_size * 4, 0);
     // xyz_scatter_2_grad.resize(type_natoms[type_i] * n_axis_neuron * 4, 0);
@@ -1363,9 +1683,9 @@ void DeepPot::fitting_net() {
     memset(xyz_scatter_2_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
 
     matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, xyz_scatter_2[type_i], inputs_i_grad, xyz_scatter_1_grad, false, true);
-    matmul_3d(type_natoms[type_i], 4, n_axis_neuron, last_layer_size, xyz_scatter_1[type_i], inputs_i_grad, xyz_scatter_2_grad, false, false);
+    matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, xyz_scatter_1[type_i], inputs_i_grad, xyz_scatter_2_grad, false, false);
 
-    // t_timer->stamp(Timer::MATMUL_3D);
+    t_timer->stamp(Timer::MATMUL_3D);
 
     // if(DEBUG_MSG) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("xyz_scatter_2_grad type_{}: ", type_i), xyz_scatter_2_grad);
 
@@ -1376,7 +1696,6 @@ void DeepPot::fitting_net() {
     }
     // t_timer->stamp(Timer::FIT_SLICE);
 
-
     for(int ii = 0; ii < type_natoms[type_i] * 4 * last_layer_size; ii++) {
       xyz_scatter_1_grad[ii] *= 4.0 / ndescrpt;
     }
@@ -1385,19 +1704,24 @@ void DeepPot::fitting_net() {
     if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("xyz_scatter_1_grad after * 4 type_{}: ", type_i), xyz_scatter_1_grad);
 
     for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
-      // t_timer->stamp();
+      t_timer->stamp();
       int t_ptr = type_i * ntypes + type_i_in;
 
       // tabulate_fusion_grad_cpu_packing(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr].data(), inputs_i_in_grad[t_ptr].data(), 
       //       c_table[t_ptr], xyz_scatter[t_ptr].data(), inputs_i_in[t_ptr], xyz_scatter_1_grad.data());
-      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
-            c_table[t_ptr], xyz_scatter[t_ptr], inputs_i_in[t_ptr], xyz_scatter_1_grad);
+      if(comm->tabulate_flag == 5) {
+        tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
+              c_table[t_ptr], xyz_scatter[t_ptr], inputs_i_in[t_ptr], xyz_scatter_1_grad);
+      } else if(comm->tabulate_flag == 1) {
+        tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
+              c_table[t_ptr], xyz_scatter[t_ptr], inputs_i_in[t_ptr], xyz_scatter_1_grad);
+      }
 
       for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
           inputs_i_in_grad[t_ptr][ii*4] += xyz_scatter_grad[t_ptr][ii];
       }
 
-      // t_timer->stamp(Timer::TABULATE_GRAD);
+      t_timer->stamp(Timer::TABULATE_GRAD);
 
       if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("inputs_i_in_grad {} {}:", type_i, type_i_in), inputs_i_in_grad[t_ptr]);
 
@@ -1409,10 +1733,8 @@ void DeepPot::fitting_net() {
       }
 
 
-      // t_timer->stamp(Timer::PROD_FV);
+      t_timer->stamp(Timer::PROD_FV);
     }
-
-    start_index = type_natoms[type_i];
   }
   if(DEBUG_MSG) if(tid == 0)  print_v(nloc * 3, fmt::format("prod_force_a_cpu dforce \n"), dforce);
   if(DEBUG_MSG) if(tid == 0)  print_v(9, fmt::format("prod_force_a_cpu dvirial \n"), dvirial);
@@ -1454,7 +1776,21 @@ void DeepPot::prod_env_mat_a() {
   // prod_env_mat_a_cpu_opt
 
   // env_mat_a_cpu_normalize_preprocessed (d_em_a, d_em_a_deriv, d_rij_a, coord, type, ii, fmt_nlist_a, sec, rcut_smth, rcut, avg, std);
+
   
+  
+  for(int type_i = 0; type_i < ntypes; type_i++) {
+    for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
+      int t_ptr = type_i * ntypes + type_i_in;
+      memset(descrpt[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
+      memset(xyz_scatter[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in]);
+      memset(descrpt_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
+      memset(rij[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 3);
+    }
+  }
+
+  if(DEBUG_MSG) if(tid == 0) utils::logmesg(lmp, fmt::format("[info] clear memory \n"));
+
   for(int type_i = 0; type_i < ntypes; type_i++) {
     for (int ii = sec_type_atom[type_i],  _ii = 0; ii < sec_type_atom[type_i+1]; ++ii, ++_ii) {
       // _prepare_coord_nlist_cpu<FPTYPE>
@@ -1465,25 +1801,67 @@ void DeepPot::prod_env_mat_a() {
         fmt_nlist_a[i] = -1;
       }
     
-      // memset(sel_nei, 0, d_nlist_size[ii]*sizeof(NeighborInfo));
+      memset(sel_nei, 0, d_nlist_size[ii]*sizeof(NeighborInfo));
+      sel_nei_size = 0;
+
+      FPTYPE ix = dcoord[ii * 3 + 0];
+      FPTYPE iy = dcoord[ii * 3 + 1];
+      FPTYPE iz = dcoord[ii * 3 + 2];
+
+      for (unsigned kk = 0; kk < d_nlist_size[ii]; ++kk) {
+        FPTYPE diff[3];
+        const int & j_idx = d_nlist_a[ii][kk];
+        diff[0] = dcoord[j_idx * 3 + 0] - ix;
+        diff[1] = dcoord[j_idx * 3 + 1] - iy;
+        diff[2] = dcoord[j_idx * 3 + 2] - iz;
+        FPTYPE rr = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];    
+        if (rr <= rcut * rcut) {
+          sel_nei[sel_nei_size].type = datype[j_idx];
+          sel_nei[sel_nei_size].dist = rr;
+          sel_nei[sel_nei_size].index = j_idx;
+          sel_nei_size++;
+          assert(sel_nei_size <= max_all_nei);
+        }
+      }
+
+    
+      std::sort(sel_nei, sel_nei+sel_nei_size);
+
+      for(int kk = 0; kk < ntypes+1; kk++) {
+        nei_num_v[kk] = sec_a[kk];
+      }
+      int overflowed = -1;
+      for (unsigned kk = 0; kk < sel_nei_size; ++kk) {
+        const int & nei_type = sel_nei[kk].type;
+        int index = sel_nei[kk].index;
+        if (nei_num_v[nei_type] < sec_a[nei_type+1]) {
+            fmt_nlist_a[nei_num_v[nei_type]++]  = index;
+        }
+        else {
+          overflowed = nei_type;
+          // assert(1 == 0);
+        }
+      }
+
+      // memset(sel_nei, 0, d_nlist_size[ii]*sizeof(uint64_t));
       // sel_nei_size = 0;
 
       // FPTYPE ix = dcoord[ii * 3 + 0];
       // FPTYPE iy = dcoord[ii * 3 + 1];
       // FPTYPE iz = dcoord[ii * 3 + 2];
-
       // for (unsigned kk = 0; kk < d_nlist_size[ii]; ++kk) {
-      //   FPTYPE diff[3];
-      //   const int & j_idx = d_nlist_a[ii][kk];
-      //   diff[0] = dcoord[j_idx * 3 + 0] - ix;
-      //   diff[1] = dcoord[j_idx * 3 + 1] - iy;
-      //   diff[2] = dcoord[j_idx * 3 + 2] - iz;
-      //   FPTYPE rr = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];    
+      //     FPTYPE diff[3];
+      //     const int & j_idx = d_nlist_a[ii][kk];
+      //     diff[0] = dcoord[j_idx * 3 + 0] - ix;
+      //     diff[1] = dcoord[j_idx * 3 + 1] - iy;
+      //     diff[2] = dcoord[j_idx * 3 + 2] - iz;
+
+      //   FPTYPE rr = (diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);    
       //   if (rr <= rcut * rcut) {
-      //       sel_nei[sel_nei_size].type = datype[j_idx];
-      //       sel_nei[sel_nei_size].dist = rr;
-      //       sel_nei[sel_nei_size].index = j_idx;
-      //       sel_nei_size++;
+      //     uint64_t key = (((uint64_t)datype[j_idx]    << 61)  & 0xe000000000000000) | 
+      //                     (((uint64_t)(rr * 1.0E11)  << 20)  & 0x1ffffffffff00000) |
+      //                     (j_idx                             & 0x00000000000fffff);
+      //     sel_nei[sel_nei_size++] = key;
       //   }
       // }
 
@@ -1492,57 +1870,18 @@ void DeepPot::prod_env_mat_a() {
       // for(int kk = 0; kk < ntypes+1; kk++) {
       //   nei_num_v[kk] = sec_a[kk];
       // }
+
       // int overflowed = -1;
       // for (unsigned kk = 0; kk < sel_nei_size; ++kk) {
-      //   const int & nei_type = sel_nei[kk].type;
-      //   int index = sel_nei[kk].index;
+      //   uint64_t compressed_info = sel_nei[kk];
+      //   int nei_type = (compressed_info & 0xe000000000000000) >> 61;
+      //   int index = compressed_info & 0x00000000000fffff;
       //   if (nei_num_v[nei_type] < sec_a[nei_type+1]) {
-      //       fmt_nlist_a[nei_num_v[nei_type]++]  = index;
-      //   }
-      //   else{
+      //       fmt_nlist_a[nei_num_v[nei_type] ++] = index;
+      //   } else {
       //     overflowed = nei_type;
       //   }
       // }
-
-      memset(sel_nei, 0, d_nlist_size[ii]*sizeof(uint64_t));
-      sel_nei_size = 0;
-
-      FPTYPE ix = dcoord[ii * 3 + 0];
-      FPTYPE iy = dcoord[ii * 3 + 1];
-      FPTYPE iz = dcoord[ii * 3 + 2];
-      for (unsigned kk = 0; kk < d_nlist_size[ii]; ++kk) {
-          FPTYPE diff[3];
-          const int & j_idx = d_nlist_a[ii][kk];
-          diff[0] = dcoord[j_idx * 3 + 0] - ix;
-          diff[1] = dcoord[j_idx * 3 + 1] - iy;
-          diff[2] = dcoord[j_idx * 3 + 2] - iz;
-
-        FPTYPE rr = (diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);    
-        if (rr <= rcut * rcut) {
-          uint64_t key = (((uint64_t)datype[j_idx]    << 61)  & 0xe000000000000000) | 
-                          (((uint64_t)(rr * 1.0E11)  << 20)  & 0x1ffffffffff00000) |
-                          (j_idx                             & 0x00000000000fffff);
-          sel_nei[sel_nei_size++] = key;
-        }
-      }
-
-      std::sort(sel_nei, sel_nei+sel_nei_size);  
-
-      for(int kk = 0; kk < ntypes+1; kk++) {
-        nei_num_v[kk] = sec_a[kk];
-      }
-
-      int overflowed = -1;
-      for (unsigned kk = 0; kk < sel_nei_size; ++kk) {
-        uint64_t compressed_info = sel_nei[kk];
-        int nei_type = (compressed_info & 0xe000000000000000) >> 61;
-        int index = compressed_info & 0x00000000000fffff;
-        if (nei_num_v[nei_type] < sec_a[nei_type+1]) {
-            fmt_nlist_a[nei_num_v[nei_type] ++] = index;
-        } else {
-          overflowed = nei_type;
-        }
-      }
 
       // env_mat_a_cpu_normalize_preprocessed (d_em_a, d_em_a_deriv, d_rij_a, coord, type, ii, fmt_nlist_a, sec, rcut_smth, rcut, avg, std);    
       // memset(d_rij_a, 0,      sec_a.back() * 3 * sizeof(FPTYPE));
@@ -1560,7 +1899,7 @@ void DeepPot::prod_env_mat_a() {
         FPTYPE* d_rij_a = rij[t_ptr] + _ii * sel[type_i_in] * 3;
 
         for (int jj = 0; jj < sel[type_i_in] * 4; ++jj) {
-          d_em_a[jj] = - AVG[jj] / STD[jj];
+          d_em_a[jj] = - AVG[jj] * STD[jj];
         }
         for (int jj = 0; jj < sel[type_i_in]; ++jj) {
           d_xyz_scatter[jj] = d_em_a[jj*4];
@@ -1616,28 +1955,28 @@ void DeepPot::prod_env_mat_a() {
           d_em_a[idx_value + 2] *= sw;
           d_em_a[idx_value + 3] *= sw;
 
-          d_em_a[idx_value + 0] = (d_em_a[idx_value + 0] - AVG[idx_value + 0]) / STD[idx_value + 0];
-          d_em_a[idx_value + 1] = (d_em_a[idx_value + 1] - AVG[idx_value + 1]) / STD[idx_value + 1];
-          d_em_a[idx_value + 2] = (d_em_a[idx_value + 2] - AVG[idx_value + 2]) / STD[idx_value + 2];
-          d_em_a[idx_value + 3] = (d_em_a[idx_value + 3] - AVG[idx_value + 3]) / STD[idx_value + 3];
+          d_em_a[idx_value + 0] = (d_em_a[idx_value + 0] - AVG[idx_value + 0]) * STD[idx_value + 0];
+          d_em_a[idx_value + 1] = (d_em_a[idx_value + 1] - AVG[idx_value + 1]) * STD[idx_value + 1];
+          d_em_a[idx_value + 2] = (d_em_a[idx_value + 2] - AVG[idx_value + 2]) * STD[idx_value + 2];
+          d_em_a[idx_value + 3] = (d_em_a[idx_value + 3] - AVG[idx_value + 3]) * STD[idx_value + 3];
 
           d_xyz_scatter[nei_iter] = d_em_a[idx_value + 0];
 
-          d_em_a_deriv[idx_deriv + 0] /=  STD[idx_value + 0];
-          d_em_a_deriv[idx_deriv + 1] /=  STD[idx_value + 0];
-          d_em_a_deriv[idx_deriv + 2] /=  STD[idx_value + 0];
+          d_em_a_deriv[idx_deriv + 0] *=  STD[idx_value + 0];
+          d_em_a_deriv[idx_deriv + 1] *=  STD[idx_value + 0];
+          d_em_a_deriv[idx_deriv + 2] *=  STD[idx_value + 0];
 
-          d_em_a_deriv[idx_deriv + 3] /=  STD[idx_value + 1];
-          d_em_a_deriv[idx_deriv + 4] /=  STD[idx_value + 1];
-          d_em_a_deriv[idx_deriv + 5] /=  STD[idx_value + 1];
+          d_em_a_deriv[idx_deriv + 3] *=  STD[idx_value + 1];
+          d_em_a_deriv[idx_deriv + 4] *=  STD[idx_value + 1];
+          d_em_a_deriv[idx_deriv + 5] *=  STD[idx_value + 1];
 
-          d_em_a_deriv[idx_deriv + 6] /=  STD[idx_value + 2];
-          d_em_a_deriv[idx_deriv + 7] /=  STD[idx_value + 2];
-          d_em_a_deriv[idx_deriv + 8] /=  STD[idx_value + 2];
+          d_em_a_deriv[idx_deriv + 6] *=  STD[idx_value + 2];
+          d_em_a_deriv[idx_deriv + 7] *=  STD[idx_value + 2];
+          d_em_a_deriv[idx_deriv + 8] *=  STD[idx_value + 2];
 
-          d_em_a_deriv[idx_deriv + 9] /=  STD[idx_value + 3];
-          d_em_a_deriv[idx_deriv + 10] /=  STD[idx_value + 3];
-          d_em_a_deriv[idx_deriv + 11] /=  STD[idx_value + 3];
+          d_em_a_deriv[idx_deriv + 9] *=  STD[idx_value + 3];
+          d_em_a_deriv[idx_deriv + 10] *=  STD[idx_value + 3];
+          d_em_a_deriv[idx_deriv + 11] *=  STD[idx_value + 3];
 
           // if(idx_value == 0 && ii == 0 ) {
           //   printf("d_rij_a %.9f %.9f %.9f  ",  d_rij_a[0], d_rij_a[1], d_rij_a[2]);
@@ -1650,9 +1989,16 @@ void DeepPot::prod_env_mat_a() {
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4, fmt::format("prod_env_mat atom 0 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]);
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in], fmt::format("prod_env_mat atom 0 xyz_scatter : type_i {} type_i_in {}", type_i, type_i_in), xyz_scatter[t_ptr]);
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 0 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]);
-          // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 nlist : type_i {} type_i_in {}", type_i, type_i_in), nlist);
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3, fmt::format("prod_env_mat atom 0 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]);
+          // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 nlist : type_i {} type_i_in {}", type_i, type_i_in), nlist);
         }
+
+        // if(_ii == 5) {
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4,     fmt::format("prod_env_mat atom 5 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]+5*sel[type_i_in]*4);
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in],    fmt::format("prod_env_mat atom 5 xyz_scatter : type_i {} type_i_in {}", type_i, type_i_in), xyz_scatter[t_ptr]+5*sel[type_i_in]);
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 5 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]+5*sel[type_i_in]*4 *3);
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3,     fmt::format("prod_env_mat atom 5 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]+5*sel[type_i_in]*3);
+        // }
       }
     }
   }
@@ -1796,27 +2142,27 @@ void DeepPot::prod_env_mat_a() {
         d_em_a[idx_value + 2] = (d_em_a[idx_value + 2] - AVG[idx_value + 2]) / STD[idx_value + 2];
         d_em_a[idx_value + 3] = (d_em_a[idx_value + 3] - AVG[idx_value + 3]) / STD[idx_value + 3];
 
-        d_em_a_deriv[idx_deriv + 0] *=  STD[idx_value + 0];
-        d_em_a_deriv[idx_deriv + 1] *=  STD[idx_value + 0];
-        d_em_a_deriv[idx_deriv + 2] *=  STD[idx_value + 0];
+        d_em_a_deriv[idx_deriv + 0] /=  STD[idx_value + 0];
+        d_em_a_deriv[idx_deriv + 1] /=  STD[idx_value + 0];
+        d_em_a_deriv[idx_deriv + 2] /=  STD[idx_value + 0];
 
-        d_em_a_deriv[idx_deriv + 3] *=  STD[idx_value + 1];
-        d_em_a_deriv[idx_deriv + 4] *=  STD[idx_value + 1];
-        d_em_a_deriv[idx_deriv + 5] *=  STD[idx_value + 1];
+        d_em_a_deriv[idx_deriv + 3] /=  STD[idx_value + 1];
+        d_em_a_deriv[idx_deriv + 4] /=  STD[idx_value + 1];
+        d_em_a_deriv[idx_deriv + 5] /=  STD[idx_value + 1];
 
-        d_em_a_deriv[idx_deriv + 6] *=  STD[idx_value + 2];
-        d_em_a_deriv[idx_deriv + 7] *=  STD[idx_value + 2];
-        d_em_a_deriv[idx_deriv + 8] *=  STD[idx_value + 2];
+        d_em_a_deriv[idx_deriv + 6] /=  STD[idx_value + 2];
+        d_em_a_deriv[idx_deriv + 7] /=  STD[idx_value + 2];
+        d_em_a_deriv[idx_deriv + 8] /=  STD[idx_value + 2];
 
-        d_em_a_deriv[idx_deriv + 9] *=  STD[idx_value + 3];
-        d_em_a_deriv[idx_deriv + 10] *=  STD[idx_value + 3];
-        d_em_a_deriv[idx_deriv + 11] *=  STD[idx_value + 3];
+        d_em_a_deriv[idx_deriv + 9] /=  STD[idx_value + 3];
+        d_em_a_deriv[idx_deriv + 10] /=  STD[idx_value + 3];
+        d_em_a_deriv[idx_deriv + 11] /=  STD[idx_value + 3];
       }
     }
   }
 
   if(DEBUG_MSG) if(tid == 0) print_v(ndescrpt, fmt::format("prod_env_mat atom 0 descrpt : "), descrpt);
-  // if(DEBUG_MSG) if(tid == 0) print_v(ndescrpt * 3, fmt::format("prod_env_mat atom 0 descrpt_deriv : "), descrpt_deriv);
+  if(DEBUG_MSG) if(tid == 0) print_v(ndescrpt * 3, fmt::format("prod_env_mat atom 0 descrpt_deriv : "), descrpt_deriv);
   // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 nlist : "), nlist);
   // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 AVG : "), avg_zero);
   // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 STD : "), std_ones);
@@ -2107,20 +2453,6 @@ void DeepPot::tabulateFusion_sve(int _loc,
       }
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
-
-      // if(do_prefetch) {
-      //   if(jj + PREFETCH_SIZE >= _nnei) do_prefetch = false;
-      //   xx_next = em_x[ii * _nnei + jj + PREFETCH_SIZE];
-      //   if(xx_next == ago) do_prefetch = false;
-      // }
-      // if(do_prefetch) {
-      //   int n_table_idx = 0;
-      //   locate_xx(lower, upper, _max, stride0, stride1, xx_next, n_table_idx);        
-      //   const float* TABLE = &_table[n_table_idx * last_layer_size * 6];
-      //   for(int kk = 0; kk < last_layer_size * 6 / svcntw(); kk++){
-      //     svprfb_vnum(ptrue, TABLE, kk, SV_PLDL2STRM) ;
-      //   }
-      // }
 
       assert(last_layer_size % svcntw() == 0);
 
@@ -2664,6 +2996,7 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
         // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
         svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
         svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+
         svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
         svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
         svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
@@ -2672,24 +3005,28 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
         svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
         svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
         svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+
         svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
         svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
         svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
         svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
         svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
         svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+
         svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
         svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
         svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
         svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+
         svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
         svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
         svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
         svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
         svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
         svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+
         svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
         svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
         svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
@@ -2706,6 +3043,7 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
         svfloat32_t tmp18_1 = svmul_z(ptrue, vll2, vrr2_1);
         svfloat32_t tmp19_0 = svmul_z(ptrue, vll3, vrr3_0);
         svfloat32_t tmp19_1 = svmul_z(ptrue, vll3, vrr3_1);
+        
         svfloat32_t tmp20_0 = svadd_z(ptrue, tmp16_0, tmp17_0);
         svfloat32_t tmp20_1 = svadd_z(ptrue, tmp16_1, tmp17_1);
         svfloat32_t tmp21_0 = svadd_z(ptrue, tmp18_0, tmp19_0);
@@ -3053,5 +3391,509 @@ void DeepPot::prod_virial_a_cpu(
   }
 }
 
-
 #endif
+
+void DeepPot::tabulateFusion_v1_sve(int _loc,
+  int _nnei,
+  FPTYPE* &em_x,
+  FPTYPE* &em,
+  FPTYPE *out,
+  const FPTYPE* _table) {
+
+  const FPTYPE lower   = c_table_info[0];
+  const FPTYPE upper   = c_table_info[1];
+  const FPTYPE _max    = c_table_info[2];
+  const FPTYPE stride0 = c_table_info[3];
+  const FPTYPE stride1 = c_table_info[4];
+
+#ifndef HIGH_PREC
+  // for every atom, execute a small manual gemm ~
+  // FPTYPE * res = new FPTYPE[4 * last_layer_size];
+  // #pragma omp parallel for
+
+  #if 0
+  for (int ii = 0; ii < _loc; ii++) { // 对loc atom 遍历
+    FPTYPE ll[4] = {0};
+    FPTYPE ago = em_x[ii * _nnei + _nnei - 1]; // 拿到最后一个邻居
+    bool unloop = false; 
+
+    FPTYPE* out0 = out + ii * last_layer_size * 4 + 0 * last_layer_size;
+    FPTYPE* out1 = out + ii * last_layer_size * 4 + 1 * last_layer_size;
+    FPTYPE* out2 = out + ii * last_layer_size * 4 + 2 * last_layer_size;
+    FPTYPE* out3 = out + ii * last_layer_size * 4 + 3 * last_layer_size; // 输出的指针
+
+    for (int jj = 0; jj < _nnei; jj++) {  // 对所有邻居遍历
+      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
+      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
+      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
+      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
+      FPTYPE xx = em_x[ii * _nnei + jj];  // sij
+      if (ago == xx) { // 是空
+        unloop = true;
+      }
+      int table_idx = 0;
+      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
+
+      // assert(table_idx < 136000);
+
+      for (int kbs = 0; kbs < last_layer_size; kbs+=TABLE_STEP) {
+        int kbe = kbs + TABLE_STEP;
+        const FPTYPE *table0 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 0];
+        const FPTYPE *table1 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 1];
+        // const FPTYPE *table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
+        // const FPTYPE *table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
+        // const FPTYPE *table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
+        // const FPTYPE *table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
+        for (int kk = kbs; kk < kbe; kk++) {
+          FPTYPE a0  = table0[kk-kbs]; 
+          FPTYPE a1  = table1[kk-kbs]; 
+          // FPTYPE a2  = table2[kk-kbs]; 
+          // FPTYPE a3  = table3[kk-kbs];
+          // FPTYPE a4  = table4[kk-kbs];
+          // FPTYPE a5  = table5[kk-kbs];
+          // FPTYPE var = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx; // 128 次 多项式拟合
+          FPTYPE var = a0 + a1 * xx;
+
+          if (unloop) {
+            out0[kk] += (_nnei - jj) * var * ll[0];
+            out1[kk] += (_nnei - jj) * var * ll[1];
+            out2[kk] += (_nnei - jj) * var * ll[2];
+            out3[kk] += (_nnei - jj) * var * ll[3];
+          }
+          else {
+            out0[kk] += var * ll[0];
+            out1[kk] += var * ll[1];
+            out2[kk] += var * ll[2];
+            out3[kk] += var * ll[3];
+          }
+        }
+      }
+
+      if (unloop) break;
+    }
+  }
+
+  #else
+
+  for (int ii = 0; ii < _loc; ii++) {
+    svbool_t ptrue = svptrue_b32();
+
+    FPTYPE ll[4] = {0};
+    FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
+    bool unloop = false; 
+
+    FPTYPE* out0 = out + ii * last_layer_size * 4 + 0 * last_layer_size;
+    FPTYPE* out1 = out + ii * last_layer_size * 4 + 1 * last_layer_size;
+    FPTYPE* out2 = out + ii * last_layer_size * 4 + 2 * last_layer_size;
+    FPTYPE* out3 = out + ii * last_layer_size * 4 + 3 * last_layer_size;
+
+    for (int jj = 0; jj < _nnei; jj++) { 
+      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
+      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
+      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
+      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
+
+      FPTYPE xx = em_x[ii * _nnei + jj]; 
+      FPTYPE xx_next;
+      if (ago == xx) {
+        unloop = true;
+      }
+      int table_idx = 0;
+      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
+
+      assert(last_layer_size % svcntw() == 0);
+
+      svfloat32_t vnei_sub_jj = svdup_f32((float(_nnei - jj)));
+      svfloat32_t vxx = svdup_f32(xx);
+      // svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
+      // svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
+      // svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
+      // svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      svfloat32_t vll0 = svdup_f32(ll[0]);
+      svfloat32_t vll1 = svdup_f32(ll[1]);
+      svfloat32_t vll2 = svdup_f32(ll[2]);
+      svfloat32_t vll3 = svdup_f32(ll[3]);
+      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
+      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
+      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
+      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
+
+      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2) {
+        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kk * TABLE_STRIDE_V1];
+        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
+        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
+        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
+        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
+        // svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
+        // svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
+        // svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
+        // svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
+        // svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
+        // svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
+        // svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
+        // svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11); 
+
+        // svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        // svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
+        // svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
+        // svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
+        // svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
+        // svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
+        // svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
+        // svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
+        // svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        // svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
+        // svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
+        // svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
+        // svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
+        // svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
+        // svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        // svfloat32_t vvar_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
+        // svfloat32_t vvar_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+
+        svfloat32_t vvar_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        svfloat32_t vvar_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+
+        svfloat32_t vout0_0 = svld1(ptrue, out0 + kk);
+        svfloat32_t vout0_1 = svld1(ptrue, out0 + kk + svcntw());
+        svfloat32_t vout1_0 = svld1(ptrue, out1 + kk);
+        svfloat32_t vout1_1 = svld1(ptrue, out1 + kk + svcntw());
+        svfloat32_t vout2_0 = svld1(ptrue, out2 + kk);
+        svfloat32_t vout2_1 = svld1(ptrue, out2 + kk + svcntw());
+        svfloat32_t vout3_0 = svld1(ptrue, out3 + kk);
+        svfloat32_t vout3_1 = svld1(ptrue, out3 + kk + svcntw());
+
+        if(unloop){
+          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
+          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
+          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1_);
+          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1_);
+          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2_);
+          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2_);
+          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3_);
+          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3_);
+        }else{
+          vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0);
+          vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0);
+          vout1_0 = svmla_z(ptrue, vout1_0, vvar_0, vll1);
+          vout1_1 = svmla_z(ptrue, vout1_1, vvar_1, vll1);
+          vout2_0 = svmla_z(ptrue, vout2_0, vvar_0, vll2);
+          vout2_1 = svmla_z(ptrue, vout2_1, vvar_1, vll2);
+          vout3_0 = svmla_z(ptrue, vout3_0, vvar_0, vll3);
+          vout3_1 = svmla_z(ptrue, vout3_1, vvar_1, vll3);
+        }
+        svst1(ptrue, out0 + kk, vout0_0);
+        svst1(ptrue, out0 + kk + svcntw(), vout0_1);
+        svst1(ptrue, out1 + kk, vout1_0);
+        svst1(ptrue, out1 + kk + svcntw(), vout1_1);
+        svst1(ptrue, out2 + kk, vout2_0);
+        svst1(ptrue, out2 + kk + svcntw(), vout2_1);
+        svst1(ptrue, out3 + kk, vout3_0);
+        svst1(ptrue, out3 + kk + svcntw(), vout3_1);
+      }
+      if (unloop) break;
+    }
+  }
+
+  #endif
+  #endif
+
+}
+
+
+void DeepPot::tabulate_fusion_grad_cpu_packing_v1_sve(
+    int _loc, int _nnei,
+    FPTYPE *dy_dem_x, 
+    FPTYPE *dy_dem,
+    const FPTYPE * _table, 
+    FPTYPE *em_x, 
+    FPTYPE *em, 
+    FPTYPE *dy) {
+
+#ifndef HIGH_PREC
+  memset(dy_dem_x, 0.0, sizeof(FPTYPE) * _loc * _nnei);
+  memset(dy_dem, 0.0, sizeof(FPTYPE) * _loc * _nnei * 4);
+  FPTYPE const lower   = c_table_info[0];
+  FPTYPE const upper   = c_table_info[1];
+  FPTYPE const _max    = c_table_info[2];
+  FPTYPE const stride0 = c_table_info[3];
+  FPTYPE const stride1 = c_table_info[4];
+
+
+  #if 0 
+
+  for (int ii = 0; ii < _loc; ii++) {
+    FPTYPE ll[4];
+    FPTYPE rr[4];
+    FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
+    const FPTYPE* dy0 = &dy[ii * last_layer_size * 4 + 0 * last_layer_size];
+    const FPTYPE* dy1 = &dy[ii * last_layer_size * 4 + 1 * last_layer_size];
+    const FPTYPE* dy2 = &dy[ii * last_layer_size * 4 + 2 * last_layer_size];
+    const FPTYPE* dy3 = &dy[ii * last_layer_size * 4 + 3 * last_layer_size];
+    bool unloop = false;
+    for (int jj = 0; jj < _nnei; jj++) {
+      // construct the dy/dx
+      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
+      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
+      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
+      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
+      FPTYPE xx = em_x[ii * _nnei + jj]; 
+      if (ago == xx) {
+        unloop = true;
+      }
+      int table_idx = 0;
+      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
+
+      assert(table_idx < 136000);
+
+      FPTYPE* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
+
+      FPTYPE grad = 0.0;
+      FPTYPE dy_dem_0 = 0.0;
+      FPTYPE dy_dem_1 = 0.0;
+      FPTYPE dy_dem_2 = 0.0;
+      FPTYPE dy_dem_3 = 0.0;
+
+      for (int kbs = 0; kbs < last_layer_size; kbs += TABLE_STEP){
+        int kbe = kbs + TABLE_STEP;
+        const FPTYPE *table0 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 0];
+        const FPTYPE *table1 = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kbs * TABLE_STRIDE_V1 + TABLE_STEP * 1];
+        // const FPTYPE* table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
+        // const FPTYPE* table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
+        // const FPTYPE* table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
+        // const FPTYPE* table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
+        for (int kk = kbs; kk < kbe; kk++) {
+          rr[0] = dy0[kk];
+          rr[1] = dy1[kk];
+          rr[2] = dy2[kk];
+          rr[3] = dy3[kk];
+          FPTYPE a0  = table0[kk-kbs]; 
+          FPTYPE a1  = table1[kk-kbs]; 
+          // FPTYPE a2  = table2[kk-kbs]; 
+          // FPTYPE a3  = table3[kk-kbs];
+          // FPTYPE a4  = table4[kk-kbs];
+          // FPTYPE a5  = table5[kk-kbs];
+          // FPTYPE res = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx;
+          FPTYPE res = a0 + a1  * xx;
+
+          if (unloop) {
+            grad += (a1) * dot(ll, rr) * (_nnei - jj);
+            dy_dem_0 += res * rr[0] * (_nnei - jj);
+            dy_dem_1 += res * rr[1] * (_nnei - jj);
+            dy_dem_2 += res * rr[2] * (_nnei - jj);
+            dy_dem_3 += res * rr[3] * (_nnei - jj);
+          }
+          else {
+            grad += (a1 ) * dot(ll, rr);
+            dy_dem_0 += res * rr[0];
+            dy_dem_1 += res * rr[1];
+            dy_dem_2 += res * rr[2];
+            dy_dem_3 += res * rr[3];
+          }
+        }
+      }
+
+      dy_dem_x[ii * _nnei + jj] = grad;
+      dy_dem_tmp[0] = dy_dem_0;
+      dy_dem_tmp[1] = dy_dem_1;
+      dy_dem_tmp[2] = dy_dem_2;
+      dy_dem_tmp[3] = dy_dem_3;
+
+      if (unloop) break;
+    }
+  }
+
+  #else 
+  // for every atom, execute a small gemm~
+  // float * res = new float[4 * last_layer_size];
+  // #pragma omp parallel for
+  for (int ii = 0; ii < _loc; ii++) {
+    FPTYPE ll[4];
+    FPTYPE rr[4];
+    FPTYPE ago = em_x[ii * _nnei + _nnei - 1];
+    const FPTYPE* dy0 = &dy[ii * last_layer_size * 4 + 0 * last_layer_size];
+    const FPTYPE* dy1 = &dy[ii * last_layer_size * 4 + 1 * last_layer_size];
+    const FPTYPE* dy2 = &dy[ii * last_layer_size * 4 + 2 * last_layer_size];
+    const FPTYPE* dy3 = &dy[ii * last_layer_size * 4 + 3 * last_layer_size];
+    bool unloop = false;
+
+    svbool_t ptrue = svptrue_b32();
+
+    for (int jj = 0; jj < _nnei; jj++) {
+      // construct the dy/dx
+      ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
+      ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
+      ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
+      ll[3] = em[ii * _nnei * 4 + jj * 4 + 3];
+      FPTYPE xx = em_x[ii * _nnei + jj]; 
+      FPTYPE xx_next;
+      if (ago == xx) {
+        unloop = true;
+      }
+      int table_idx = 0;
+      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
+      
+      FPTYPE* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
+
+      svfloat32_t vgard = svdup_f32(0.f);
+      svfloat32_t vdy_dem_0 = svdup_f32(0.f);
+      svfloat32_t vdy_dem_1 = svdup_f32(0.f);
+      svfloat32_t vdy_dem_2 = svdup_f32(0.f);
+      svfloat32_t vdy_dem_3 = svdup_f32(0.f);
+
+      // assert(last_layer_size % svcntw() == 0);
+
+      // svfloat32_t vtwo = svdup_f32(2.f);
+      // svfloat32_t vthree = svdup_f32(3.f);
+      // svfloat32_t vfour = svdup_f32(4.f);
+      // svfloat32_t vfive = svdup_f32(5.f);
+
+      svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
+      svfloat32_t vxx = svdup_f32(xx);
+
+      // svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
+      // svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
+      // svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
+      // svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      // svfloat32_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
+      // svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
+      // svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
+      // svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
+      svfloat32_t vll0 = svdup_f32(ll[0]);
+      svfloat32_t vll1 = svdup_f32(ll[1]);
+      svfloat32_t vll2 = svdup_f32(ll[2]);
+      svfloat32_t vll3 = svdup_f32(ll[3]);
+      svfloat32_t vll0_ = svmul_z(ptrue, vll0, vnei_sub_jj);
+      svfloat32_t vll1_ = svmul_z(ptrue, vll1, vnei_sub_jj);
+      svfloat32_t vll2_ = svmul_z(ptrue, vll2, vnei_sub_jj);
+      svfloat32_t vll3_ = svmul_z(ptrue, vll3, vnei_sub_jj);
+      for(int kk = 0; kk < last_layer_size; kk += svcntw() * 2) {
+        svfloat32_t vrr0_0 = svld1(ptrue, dy0 + kk);
+        svfloat32_t vrr0_1 = svld1(ptrue, dy0 + kk + svcntw());
+        svfloat32_t vrr1_0 = svld1(ptrue, dy1 + kk);
+        svfloat32_t vrr1_1 = svld1(ptrue, dy1 + kk + svcntw());
+        svfloat32_t vrr2_0 = svld1(ptrue, dy2 + kk);
+        svfloat32_t vrr2_1 = svld1(ptrue, dy2 + kk + svcntw());
+        svfloat32_t vrr3_0 = svld1(ptrue, dy3 + kk);
+        svfloat32_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntw());
+
+        const FPTYPE* TABLE = &_table[table_idx * last_layer_size * TABLE_STRIDE_V1 + kk * TABLE_STRIDE_V1];
+        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
+        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
+        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
+        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
+        // svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
+        // svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
+        // svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
+        // svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
+        // svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
+        // svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
+        // svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
+        // svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+
+        // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
+        // svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        // svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
+        // svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
+        // svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
+        // svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
+        // svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
+        // svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
+        // svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
+        // svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        // svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
+        // svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
+        // svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
+        // svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
+        // svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
+        // svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        // svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
+        // svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+
+        svfloat32_t vres_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        svfloat32_t vres_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+
+        // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
+        // svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
+        // svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+        // svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
+        // svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
+        // svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
+        // svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
+        // svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
+        // svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+        // svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
+        // svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
+        // svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
+        // svfloat32_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
+        // svfloat32_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
+        // svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+
+        // dot(ll, rr);
+        svfloat32_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);
+        svfloat32_t tmp16_1 = svmul_z(ptrue, vll0, vrr0_1);
+        svfloat32_t tmp17_0 = svmul_z(ptrue, vll1, vrr1_0);
+        svfloat32_t tmp17_1 = svmul_z(ptrue, vll1, vrr1_1);
+        svfloat32_t tmp18_0 = svmul_z(ptrue, vll2, vrr2_0);
+        svfloat32_t tmp18_1 = svmul_z(ptrue, vll2, vrr2_1);
+        svfloat32_t tmp19_0 = svmul_z(ptrue, vll3, vrr3_0);
+        svfloat32_t tmp19_1 = svmul_z(ptrue, vll3, vrr3_1);
+        svfloat32_t tmp20_0 = svadd_z(ptrue, tmp16_0, tmp17_0);
+        svfloat32_t tmp20_1 = svadd_z(ptrue, tmp16_1, tmp17_1);
+        svfloat32_t tmp21_0 = svadd_z(ptrue, tmp18_0, tmp19_0);
+        svfloat32_t tmp21_1 = svadd_z(ptrue, tmp18_1, tmp19_1);
+        svfloat32_t tmp22_0 = svadd_z(ptrue, tmp20_0, tmp21_0);
+        svfloat32_t tmp22_1 = svadd_z(ptrue, tmp20_1, tmp21_1);
+
+        // grad = (a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4 ) * dot(ll, rr);
+        // svfloat32_t vgard_0 = svmul_z(ptrue, tmp15_0, tmp22_0);
+        // svfloat32_t vgard_1 = svmul_z(ptrue, tmp15_1, tmp22_1);
+        svfloat32_t vgard_0 = svmul_z(ptrue, va1_0, tmp22_0);
+        svfloat32_t vgard_1 = svmul_z(ptrue, va1_1, tmp22_1);
+
+        svfloat32_t vres0_0 = svmul_z(ptrue, vres_0, vrr0_0);
+        svfloat32_t vres0_1 = svmul_z(ptrue, vres_1, vrr0_1);
+        svfloat32_t vres1_0 = svmul_z(ptrue, vres_0, vrr1_0);
+        svfloat32_t vres1_1 = svmul_z(ptrue, vres_1, vrr1_1);
+        svfloat32_t vres2_0 = svmul_z(ptrue, vres_0, vrr2_0);
+        svfloat32_t vres2_1 = svmul_z(ptrue, vres_1, vrr2_1);
+        svfloat32_t vres3_0 = svmul_z(ptrue, vres_0, vrr3_0);
+        svfloat32_t vres3_1 = svmul_z(ptrue, vres_1, vrr3_1);
+        if(unloop){
+          vgard_0 = svmul_z(ptrue, vgard_0, vnei_sub_jj);
+          vgard_1 = svmul_z(ptrue, vgard_1, vnei_sub_jj);
+          vres0_0 = svmul_z(ptrue, vres0_0, vnei_sub_jj);
+          vres0_1 = svmul_z(ptrue, vres0_1, vnei_sub_jj);
+          vres1_0 = svmul_z(ptrue, vres1_0, vnei_sub_jj);
+          vres1_1 = svmul_z(ptrue, vres1_1, vnei_sub_jj);
+          vres2_0 = svmul_z(ptrue, vres2_0, vnei_sub_jj);
+          vres2_1 = svmul_z(ptrue, vres2_1, vnei_sub_jj);
+          vres3_0 = svmul_z(ptrue, vres3_0, vnei_sub_jj);
+          vres3_1 = svmul_z(ptrue, vres3_1, vnei_sub_jj);
+        }
+        vgard = svadd_z(ptrue, vgard, vgard_0);
+        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_0);
+        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_0);
+        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_0);
+        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_0);
+        vgard = svadd_z(ptrue, vgard, vgard_1);
+        vdy_dem_0 = svadd_z(ptrue, vdy_dem_0, vres0_1);
+        vdy_dem_1 = svadd_z(ptrue, vdy_dem_1, vres1_1);
+        vdy_dem_2 = svadd_z(ptrue, vdy_dem_2, vres2_1);
+        vdy_dem_3 = svadd_z(ptrue, vdy_dem_3, vres3_1);
+      }
+
+      dy_dem_x[ii * _nnei + jj] = svaddv(ptrue, vgard);
+      dy_dem_tmp[0] = svaddv(ptrue, vdy_dem_0);
+      dy_dem_tmp[1] = svaddv(ptrue, vdy_dem_1);
+      dy_dem_tmp[2] = svaddv(ptrue, vdy_dem_2);
+      dy_dem_tmp[3] = svaddv(ptrue, vdy_dem_3);  
+
+      if (unloop) break;
+    }
+  }   
+  #endif
+  #endif
+}

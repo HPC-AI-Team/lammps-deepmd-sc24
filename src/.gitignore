@@ -20,7 +20,8 @@ a.out
 /ADIOS/Makefile.lammps
 /Make.py.last
 /lmp_*
-*.pb*.dat
+*.pb
+# *.dat
 TEST_TF
 
 /style_*.h
@@ -31,12 +32,12 @@ TEST_TF
 __pycache__
 
 Obj_*
-*.dat
+# *.dat
 lmp_execute_*
 log.lammps
 lmp_execute
 lmp_threadpool
-
+lmp_omp_tf
 compile.log
 
 *.err
@@ -56,6 +57,8 @@ output/
 /*_kokkos_impl.h
 /*_kokkos.cpp
 
+/*_omp.h
+/*_omp.cpp
 /*_opt.h
 /*_opt.cpp
 /*_tally.h
@@ -1478,7 +1481,8 @@ output/
 /temper_npt.h
 /third_order.cpp
 /third_order.h
-
+/thr_data.cpp
+/thr_data.h
 /verlet_split.cpp
 /verlet_split.h
 /xdr_compat.cpp
@@ -1662,7 +1666,6 @@ output/
 /pair_vashishta*.h
 
 BIN_deepmd/water_graph-compress-preprocess-gemm_tanh_float.pb
-BIN_deepmd_copper/pb_data_copper.dat
-BIN_deepmd_copper/pb_data_copper.dat
+# BIN_deepmd_copper/pb_data_copper.dat
 BIN_deepmd/water_compressfp64.pb
 BIN_deepmd/graph-compress-preprocess-gemm_tanh.pb

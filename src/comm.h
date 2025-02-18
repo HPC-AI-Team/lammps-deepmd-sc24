@@ -67,6 +67,8 @@ class Comm : protected Pointers {
 
   bool debug_flag;
   bool fp16_flag;
+  int tabulate_flag;
+  bool deepmd_flag;
 
 
   // methods

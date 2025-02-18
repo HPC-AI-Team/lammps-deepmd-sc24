@@ -2,13 +2,17 @@
 #define DEEPMD_COMMON_H 
 
 // #define WITH_TENSOR_FLOW
-#define COMBIN_OMP
+// #define COMBIN_OMP
 
 #define SPLIT_TYPE_EMBEDDING
 
 #define __ARM_FEATURE_SVE
 
+// #define _TABULATE_FITTING
+
 // #define HIGH_PREC
+
+// #define TABLE_V1
 
 // #define OPT_CBLAS
 
@@ -25,13 +29,16 @@ typedef float  FPTYPE;
 typedef double ENERGYTYPE;
 #define cblas_xgemm cblas_sgemm
 #define TABLE_STEP 32
+#define TABLE_STEP_V1 32
 #endif
 
+
 #ifndef HIGH_PREC
-#ifdef OPT_CBLAS
 #define T_FLOAT_16
 #endif
-#endif
+
+#define TABLE_STRIDE_V5 6
+#define TABLE_STRIDE_V1 2
 
 #include <cblas.h>
 
@@ -137,6 +144,15 @@ inline void print_v(int n, std::string mesg, const T* v) {
       else if(std::is_same<float, T>::value) printf("%0.9f ", v[ii]);
       else printf("%d ", v[ii]);
       if(ii % 100 == 0 && ii != 0) printf("\n");
+  }
+  printf("\n"); std::fflush(stdout);
+}
+
+inline void print_v_full(int n, std::string mesg, const double* v) {
+  printf("%s :\n", mesg.c_str());
+  for(int ii = 0; ii < n; ii ++) {
+    printf("%16.12f ", v[ii]);
+    if(ii % 100 == 0 && ii != 0) printf("\n");
   }
   printf("\n"); std::fflush(stdout);
 }
@@ -641,26 +657,58 @@ inline void matmul_4x16_16x128_nt(const int M, const int N, const int K,
 inline void matmul_4x128_128x16_nn(const int M, const int N, const int K,
   float *A, float* B, float *C) {
 
+    // for(int kk = 0; kk < K; kk++) {
+    //   for(int mm = 0; mm < M; mm++) {
+    //     C[mm*16+ 0] += A[mm*K+kk] * B[kk*N + 0];
+    //     C[mm*16+ 1] += A[mm*K+kk] * B[kk*N + 1];
+    //     C[mm*16+ 2] += A[mm*K+kk] * B[kk*N + 2];
+    //     C[mm*16+ 3] += A[mm*K+kk] * B[kk*N + 3];
+    //     C[mm*16+ 4] += A[mm*K+kk] * B[kk*N + 4];
+    //     C[mm*16+ 5] += A[mm*K+kk] * B[kk*N + 5];
+    //     C[mm*16+ 6] += A[mm*K+kk] * B[kk*N + 6];
+    //     C[mm*16+ 7] += A[mm*K+kk] * B[kk*N + 7];
+    //     C[mm*16+ 8] += A[mm*K+kk] * B[kk*N + 8];
+    //     C[mm*16+ 9] += A[mm*K+kk] * B[kk*N + 9];
+    //     C[mm*16+ 10] += A[mm*K+kk] * B[kk*N + 10];
+    //     C[mm*16+ 11] += A[mm*K+kk] * B[kk*N + 11];
+    //     C[mm*16+ 12] += A[mm*K+kk] * B[kk*N + 12];
+    //     C[mm*16+ 13] += A[mm*K+kk] * B[kk*N + 13];
+    //     C[mm*16+ 14] += A[mm*K+kk] * B[kk*N + 14];
+    //     C[mm*16+ 15] += A[mm*K+kk] * B[kk*N + 15];
+    //   }
+    // }
+
+    svbool_t ptrue = svptrue_b32();
+
+    svfloat32_t bin_0, cin_0;
+    svfloat32_t bin_1, cin_1;
+    svfloat32_t bin_2, cin_2;
+    svfloat32_t bin_3, cin_3;
+
+    cin_0 = svdup_f32(0.); 
+    cin_1 = svdup_f32(0.); 
+    cin_2 = svdup_f32(0.); 
+    cin_3 = svdup_f32(0.); 
+
     for(int kk = 0; kk < K; kk++) {
-      for(int mm = 0; mm < M; mm++) {
-        C[mm*16+ 0] = A[mm*K+kk] * B[kk*N + 0];
-        C[mm*16+ 1] = A[mm*K+kk] * B[kk*N + 1];
-        C[mm*16+ 2] = A[mm*K+kk] * B[kk*N + 2];
-        C[mm*16+ 3] = A[mm*K+kk] * B[kk*N + 3];
-        C[mm*16+ 4] = A[mm*K+kk] * B[kk*N + 4];
-        C[mm*16+ 5] = A[mm*K+kk] * B[kk*N + 5];
-        C[mm*16+ 6] = A[mm*K+kk] * B[kk*N + 6];
-        C[mm*16+ 7] = A[mm*K+kk] * B[kk*N + 7];
-        C[mm*16+ 8] = A[mm*K+kk] * B[kk*N + 8];
-        C[mm*16+ 9] = A[mm*K+kk] * B[kk*N + 9];
-        C[mm*16+ 10] = A[mm*K+kk] * B[kk*N + 10];
-        C[mm*16+ 11] = A[mm*K+kk] * B[kk*N + 11];
-        C[mm*16+ 12] = A[mm*K+kk] * B[kk*N + 12];
-        C[mm*16+ 13] = A[mm*K+kk] * B[kk*N + 13];
-        C[mm*16+ 14] = A[mm*K+kk] * B[kk*N + 14];
-        C[mm*16+ 15] = A[mm*K+kk] * B[kk*N + 15];
-      }
+      float a0 = A[0*K+kk];
+      float a1 = A[1*K+kk];
+      float a2 = A[2*K+kk];
+      float a3 = A[3*K+kk];
+
+      bin_0 = svld1_vnum(ptrue, B, kk);
+
+      cin_0 = svmla_z(ptrue, cin_0, bin_0,  a0);
+      cin_1 = svmla_z(ptrue, cin_1, bin_0,  a1);
+      cin_2 = svmla_z(ptrue, cin_2, bin_0,  a2);
+      cin_3 = svmla_z(ptrue, cin_3, bin_0,  a3);
+
+
     }
+    svst1_vnum(ptrue, C, 0, cin_0);
+    svst1_vnum(ptrue, C, 1, cin_1);
+    svst1_vnum(ptrue, C, 2, cin_2);
+    svst1_vnum(ptrue, C, 3, cin_3);
 }
 
 
@@ -726,7 +774,8 @@ inline void matmul_128x4_4x16(const int M, const int N, const int K,
 
 inline void matmul_f16_1x2048_2048x240_nn(const int M, const int N, const int K,
   float *A, float16_t* B, float *C) {
-    svbool_t ptrue = svptrue_b32();
+
+  svbool_t ptrue = svptrue_b32();
   svbool_t _ptrue = svptrue_b16();
   svbool_t _half_ptrue = svwhilelt_b16_u64(0, 16);
 
@@ -1000,7 +1049,13 @@ void matmul(const int m, const int n, const int k,
   float *A, float* B, float *C, float *D) ;
 
 void matmul(const int m, const int n, const int k,
-  float *A, float16_t* B, float *C, float *D) ;
+  double *A, float16_t* B, double *C, double *D, float16_t* buf) ;
+
+void matmul(const int m, const int n, const int k,
+  float *A, float16_t* B, float *C, float *D, float16_t* buf) ;
+
+// void matmul(const int m, const int n, const int k,
+//   double *A, float16_t* B, double *C, double *D, float16_t* buf) ;
 
 void matmul_3d(const int t, const int m, const int n, const int k,
   double* A, double* B, double* C, bool _transpose_a, bool _transpose_b);

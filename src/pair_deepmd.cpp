@@ -211,8 +211,6 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
       int ifrom, ito;
 
-      // double *parallel_dforce = f[0]+nall*tid*3;
-
       ThrData *thr = fix->get_thr(tid);
       double *parallel_dforce = thr->get_f()[0];
 
@@ -221,6 +219,7 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
           int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / nthreads;
           if(_thread_atom_num < 10) _thread_atom_num = 16;
+          // if(_thread_atom_num < 192) _thread_atom_num = 312;
 
           max_nloc = _thread_atom_num;
           max_nall = nall * 3;
@@ -266,14 +265,6 @@ void PairDeepMD::compute(int eflag, int vflag) {
         #pragma omp barrier
       }
 
-      // if(tid == 11) {
-      //   for(int ii = 0; ii < nall; ii++) {
-      //     for (int dd = 0; dd < 3; ++dd) {
-      //       dcoord[ii*3+dd] = x[ii][dd] - domain->boxlo[dd];
-      //     }
-      //   }
-      // }
-
       create_dcoord(nall, tid);
 
       #pragma omp barrier
@@ -292,6 +283,28 @@ void PairDeepMD::compute(int eflag, int vflag) {
           ito = ifrom + idelta_i + _bias; 
         }
         ito = (ito > nlocal) ? nlocal : ito; 
+
+        // if(tid == 0) {
+        //   ifrom = 0;
+        //   ito = nlocal;
+        // } else {
+        //   ifrom = ito = 0;
+        // }
+
+        // ifrom = tid;
+        // ito = tid + 1;
+        // if(comm->me == 0 && tid == 11) ito++;  
+
+        // if(tid == 11) {
+        //   if(comm->me % 4 == 0) {
+        //     ito = tid + 2;
+        //   }
+        // }
+
+        // ifrom = tid * 2;
+        // ito = ifrom + 2;
+        // if(ito > nlocal) ito = ifrom;
+
 
         double dener (0);
       
@@ -412,11 +425,13 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // if(DEBUG_MSG) if(tid == 0) print_v(local_nlocal * 3, fmt::format("parallel_nlocal : "), thread_dcoord[tid]);
 
           if(max_nall <= local_nall) error->one(FLERR, "[ERROR] max_nall < local_nall {} {} ", max_nall, local_nall);
-          if(max_nloc <= local_nlocal)   error->one(FLERR, "[ERROR] max_nloc < local_nlocal   {} {} ", max_nloc, local_nlocal);
+          if(max_nloc <= local_nlocal) error->one(FLERR, "[ERROR] max_nloc < local_nlocal   {} {} ", max_nloc, local_nlocal);
 
           #pragma omp barrier
 
           // print_v(local_nall * 3, fmt::format("parallel_nlocal : "), thread_dcoord[tid]);
+
+          // if(local_nlocal > 1) local_nlocal = 1 ;
 
 
           deep_pots[tid]->compute (thread_dener[tid], thread_dforce[tid], thread_dvirial[tid], thread_dcoord[tid], thread_dtype[tid], local_nghost, local_nlocal, local_lmp_list, ago);
@@ -443,11 +458,14 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // if(DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD tid {} finish force convert \n", tid);
         }
 
-        data_reduce_thr_threadpool_param(&(f[0][0]), nall, nthreads, 3, tid, scale[1][1], Pair::lmp);
+        force_reduce(&(f[0][0]), nall, nthreads, 3, tid, scale[1][1]);
+
         
         #pragma omp barrier
 
         if(tid == 0) {
+
+          // memset(&(f[0][0]), 0, nall * 3 * sizeof(double));
           // for(int ii = 0; ii < 12; ii++)
           //   if(DEBUG_MSG) print_v(nall, fmt::format("parallel_dforce {} : ", ii), parallel_dforce[ii].data());
 
@@ -625,8 +643,11 @@ void PairDeepMD::settings(int narg, char **arg)
   dbox[6] = domain->h[4];	// zx
   dbox[3] = domain->h[5];	// yx
 
+  if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] begin init deep_pot \n"));
+
   deep_pot = new DeepPot(Pair::lmp);
   deep_pot->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path);
+  if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] finish init deep_pot \n"));
 
   deep_pots = new DeepPot*[num_threads];
   for(int i = 0; i < num_threads; i++){
@@ -634,7 +655,7 @@ void PairDeepMD::settings(int narg, char **arg)
     deep_pots[i]->init(deep_pot, i);
   }
 
-  // Pair::lmp->deep_pots = deep_pots;
+  Pair::lmp->deep_pots = deep_pots;
 
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] num_threads : {} \n", num_threads));
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] numb_types  : {} \n", numb_types));
@@ -810,3 +831,172 @@ void PairDeepMD::create_dcoord(int nall, int tid) {
     }
   }
 }
+
+
+
+void PairDeepMD::force_reduce(double *dall, int nall, int nthreads, int ndim, int tid, int scale) {
+
+    // NOOP in single-threaded execution.
+    if (nthreads == 1) return;
+  #pragma omp barrier
+  
+    const int nvals = ndim * nall;
+    const int idelta = nvals / nthreads + 1;
+    const int ifrom = tid * idelta;
+    const int ito = ((ifrom + idelta) > nvals) ? nvals : (ifrom + idelta);
+  
+    // if(lmp->comm->debug_flag) utils::logmesg(lmp,"data_reduce_thr_threadpool tid {} ifrom {} ito {} nall {} nlocal {} \n", tid, ifrom, ito, nall, lmp->atom->nlocal);
+  
+    if (ifrom < nvals) {
+      int m = 0;
+  
+      // for architectures that have L1 D-cache line sizes of 64 bytes
+      // (8 doubles) wide, explicitly unroll this loop to  compute 8
+      // contiguous values in the array at a time
+      // -- modify this code based on the size of the cache line
+  
+      double t0,t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11,t12,t13,t14,t15,t16,t17,t18,t19,t20,t21,t22,t23,t24,t25,t26,t27,t28,t29,t30,t31;
+  
+      for (m = ifrom; m < (ito - 31); m += 32) {
+        t0 = dall[m + 0];
+        t1 = dall[m + 1];
+        t2 = dall[m + 2];
+        t3 = dall[m + 3];
+        t4 = dall[m + 4];
+        t5 = dall[m + 5];
+        t6 = dall[m + 6];
+        t7 = dall[m + 7];
+        t8 = dall[m + 8];
+        t9 = dall[m + 9];
+        t10 = dall[m + 10];
+        t11 = dall[m + 11];
+        t12 = dall[m + 12];
+        t13 = dall[m + 13];
+        t14 = dall[m + 14];
+        t15 = dall[m + 15];
+        t16 = dall[m + 16];
+        t17 = dall[m + 17];
+        t18 = dall[m + 18];
+        t19 = dall[m + 19];
+        t20 = dall[m + 20];
+        t21 = dall[m + 21];
+        t22 = dall[m + 22];
+        t23 = dall[m + 23];
+        t24 = dall[m + 24];
+        t25 = dall[m + 25];
+        t26 = dall[m + 26];
+        t27 = dall[m + 27];
+        t28 = dall[m + 28];
+        t29 = dall[m + 29];
+        t30 = dall[m + 30];
+        t31 = dall[m + 31];
+        for (int n = 1; n < nthreads; ++n) {
+          t0 += dall[n * nvals + m + 0];
+          t1 += dall[n * nvals + m + 1];
+          t2 += dall[n * nvals + m + 2];
+          t3 += dall[n * nvals + m + 3];
+          t4 += dall[n * nvals + m + 4];
+          t5 += dall[n * nvals + m + 5];
+          t6 += dall[n * nvals + m + 6];
+          t7 += dall[n * nvals + m + 7];
+          t8 += dall[n * nvals + m + 8];
+          t9 += dall[n * nvals + m + 9];
+          t10 += dall[n * nvals + m + 10];
+          t11 += dall[n * nvals + m + 11];
+          t12 += dall[n * nvals + m + 12];
+          t13 += dall[n * nvals + m + 13];
+          t14 += dall[n * nvals + m + 14];
+          t15 += dall[n * nvals + m + 15];
+          t16 += dall[n * nvals + m + 16];
+          t17 += dall[n * nvals + m + 17];
+          t18 += dall[n * nvals + m + 18];
+          t19 += dall[n * nvals + m + 19];
+          t20 += dall[n * nvals + m + 20];
+          t21 += dall[n * nvals + m + 21];
+          t22 += dall[n * nvals + m + 22];
+          t23 += dall[n * nvals + m + 23];
+          t24 += dall[n * nvals + m + 24];
+          t25 += dall[n * nvals + m + 25];
+          t26 += dall[n * nvals + m + 26];
+          t27 += dall[n * nvals + m + 27];
+          t28 += dall[n * nvals + m + 28];
+          t29 += dall[n * nvals + m + 29];
+          t30 += dall[n * nvals + m + 30];
+          t31 += dall[n * nvals + m + 31];
+  
+          dall[n * nvals + m + 0] = 0.0;
+          dall[n * nvals + m + 1] = 0.0;
+          dall[n * nvals + m + 2] = 0.0;
+          dall[n * nvals + m + 3] = 0.0;
+          dall[n * nvals + m + 4] = 0.0;
+          dall[n * nvals + m + 5] = 0.0;
+          dall[n * nvals + m + 6] = 0.0;
+          dall[n * nvals + m + 7] = 0.0;
+          dall[n * nvals + m + 8] = 0.0;
+          dall[n * nvals + m + 9] = 0.0;
+          dall[n * nvals + m + 10] = 0.0;
+          dall[n * nvals + m + 11] = 0.0;
+          dall[n * nvals + m + 12] = 0.0;
+          dall[n * nvals + m + 13] = 0.0;
+          dall[n * nvals + m + 14] = 0.0;
+          dall[n * nvals + m + 15] = 0.0;
+          dall[n * nvals + m + 16] = 0.0;
+          dall[n * nvals + m + 17] = 0.0;
+          dall[n * nvals + m + 18] = 0.0;
+          dall[n * nvals + m + 19] = 0.0;
+          dall[n * nvals + m + 20] = 0.0;
+          dall[n * nvals + m + 21] = 0.0;
+          dall[n * nvals + m + 22] = 0.0;
+          dall[n * nvals + m + 23] = 0.0;
+          dall[n * nvals + m + 24] = 0.0;
+          dall[n * nvals + m + 25] = 0.0;
+          dall[n * nvals + m + 26] = 0.0;
+          dall[n * nvals + m + 27] = 0.0;
+          dall[n * nvals + m + 28] = 0.0;
+          dall[n * nvals + m + 29] = 0.0;
+          dall[n * nvals + m + 30] = 0.0;
+          dall[n * nvals + m + 31] = 0.0;
+        }
+        dall[m + 0] = t0 * scale;
+        dall[m + 1] = t1 * scale;
+        dall[m + 2] = t2 * scale;
+        dall[m + 3] = t3 * scale;
+        dall[m + 4] = t4 * scale;
+        dall[m + 5] = t5 * scale;
+        dall[m + 6] = t6 * scale;
+        dall[m + 7] = t7 * scale;
+        dall[m + 8] = t8 * scale;
+        dall[m + 9] = t9 * scale;
+        dall[m + 10] = t10 * scale;
+        dall[m + 11] = t11 * scale;
+        dall[m + 12] = t12 * scale;
+        dall[m + 13] = t13 * scale;
+        dall[m + 14] = t14 * scale;
+        dall[m + 15] = t15 * scale;
+        dall[m + 16] = t16 * scale;
+        dall[m + 17] = t17 * scale;
+        dall[m + 18] = t18 * scale;
+        dall[m + 19] = t19 * scale;
+        dall[m + 20] = t20 * scale;
+        dall[m + 21] = t21 * scale;
+        dall[m + 22] = t22 * scale;
+        dall[m + 23] = t23 * scale;
+        dall[m + 24] = t24 * scale;
+        dall[m + 25] = t25 * scale;
+        dall[m + 26] = t26 * scale;
+        dall[m + 27] = t27 * scale;
+        dall[m + 28] = t28 * scale;
+        dall[m + 29] = t29 * scale;
+        dall[m + 30] = t30 * scale;
+        dall[m + 31] = t31 * scale;
+      }
+      // do the last < 32 values
+      for (; m < ito; m++) {
+        for (int n = 1; n < nthreads; ++n) {
+          dall[m] += dall[n * nvals + m];
+          dall[n * nvals + m] = 0.0;
+        }
+        dall[m] *= scale;
+      }
+    }
+  }
