@@ -42,22 +42,27 @@ export TABULATE_FLAG=5
 export TABULATE_FLAG=5
 export TEST_FP16=0
 mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01
-# mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01
+sleep 1
+mpiexec -np 1 ./lmp_execute_double  -in ./in.deepmd_speed_v01
+sleep 1
 
 export TABULATE_FLAG=5
-export TEST_FP16=0
-mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01
-# mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01
 export TEST_FP16=1
 mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01
-# mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01
+sleep 1
+mpiexec -np 1 ./lmp_execute_cblas  -in ./in.deepmd_speed_v01
+sleep 1
 
 export TABULATE_FLAG=5
 export TEST_FP16=1
 mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01
-# mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01
+sleep 1
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v01
+sleep 1
 
 export TABULATE_FLAG=1
 export TEST_FP16=1
-# mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001
 mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001
+sleep 1
+mpiexec -np 1 ./lmp_execute_float  -in ./in.deepmd_speed_v0001
+sleep 1

@@ -33,6 +33,8 @@ __pycache__
 
 Obj_*
 # *.dat
+pb_data_copper_v0001.dat
+pb_data_water_v0001.dat
 lmp_execute_*
 log.lammps
 lmp_execute

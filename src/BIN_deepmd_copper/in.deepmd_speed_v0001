@@ -20,7 +20,7 @@ replicate     	1 1 1
 # pair_style	    deepmd/omp 8 2 1 512 ../../pb_data_copper.dat
 
 #pair_style	    deepmd/omp 8 2 1 512 copper_graph-compress-preprocess.pb
-pair_style	    deepmd/omp 8 2 1 512 pb_data_copper_v0001_t.dat
+pair_style	    deepmd/omp 8 2 1 512 pb_data_copper_v0001.dat
 #pair_style	    deepmd/omp 8 2 1 512 pb_data_copper.dat
 pair_coeff	    * *
 
