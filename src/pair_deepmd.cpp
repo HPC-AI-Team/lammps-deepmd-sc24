@@ -196,7 +196,6 @@ void PairDeepMD::compute(int eflag, int vflag) {
     ev_init(eflag, vflag);
     #pragma omp parallel LMP_DEFAULT_NONE LMP_SHARED(eflag,vflag)
     {
-
       int tid = omp_get_thread_num();
       if (DEBUG_MSG) utils::logmesg(Pair::lmp,"[info] PairDeepMD::compute start tid {} comm->nthreads {} \n ", tid, comm->nthreads);
 
@@ -222,10 +221,10 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // if(_thread_atom_num < 192) _thread_atom_num = 312;
 
           max_nloc = _thread_atom_num;
-          max_nall = nall * 3;
-          max_nnei = nnei * 3;
+          max_nall = nall * 2;
+          max_nlist = nnei * 3;
 
-          if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nnei {} \n",  max_nloc,  max_nall, max_nnei);
+          if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nlist {} \n",  max_nloc,  max_nall, max_nlist);
 
           for(int _tid = 0; _tid < num_threads; _tid++){
             deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
@@ -243,11 +242,11 @@ void PairDeepMD::compute(int eflag, int vflag) {
           memory->create(thread_dener,          nthreads, "pair_deepmd::thread_dener");
 
           // if(comm->me == 0) utils::logmesg(Pair::lmp, "[INFO] thread_atom_num {} \n", max_nloc);
-          memory->create(thread_neigh,          nthreads, max_nnei * max_nloc,"pair_deepmd:thread_neigh");
+          memory->create(thread_neigh,          nthreads, max_nlist * max_nloc,"pair_deepmd:thread_neigh");
           memory->create(thread_local_ilist,    nthreads, max_nloc, "pair_deepmd::thread_local_ilist");
           memory->create(thread_local_numneigh, nthreads, max_nloc, "pair_deepmd::thread_local_numneigh");
 
-          memset(thread_neigh[0], 0,          nthreads * max_nnei * max_nloc * sizeof(int));
+          memset(thread_neigh[0], 0,          nthreads * max_nlist * max_nloc * sizeof(int));
           memset(thread_local_ilist[0], 0,    nthreads * max_nloc * sizeof(int));
           memset(thread_local_numneigh[0], 0, nthreads * max_nloc * sizeof(int));
 
@@ -258,6 +257,8 @@ void PairDeepMD::compute(int eflag, int vflag) {
             thread_firstneigh[_tid][0] =  thread_neigh[_tid];
           }
 
+          // if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD finish reserve buffer \n");
+
           MPI_Barrier(world);
         }
         first_time[tid] = 1;
@@ -265,12 +266,14 @@ void PairDeepMD::compute(int eflag, int vflag) {
         #pragma omp barrier
       }
 
-      create_dcoord(nall, tid);
+      // create_dcoord(nall, tid);
 
       #pragma omp barrier
 
       // #pragma omp parallel  
       {
+        #if 0
+
         int idelta_i = nlocal / nthreads;
         int idelta_j = nlocal % nthreads;
         int _bias    = idelta_j == 0 ? 0 : 1;
@@ -284,36 +287,17 @@ void PairDeepMD::compute(int eflag, int vflag) {
         }
         ito = (ito > nlocal) ? nlocal : ito; 
 
-        // if(tid == 0) {
-        //   ifrom = 0;
-        //   ito = nlocal;
-        // } else {
-        //   ifrom = ito = 0;
-        // }
+        // ifrom = 0;
+        // if(tid == 0) ito = nlocal;
+        // else ito = 0;
 
-        // ifrom = tid;
-        // ito = tid + 1;
-        // if(comm->me == 0 && tid == 11) ito++;  
-
-        // if(tid == 11) {
-        //   if(comm->me % 4 == 0) {
-        //     ito = tid + 2;
-        //   }
-        // }
-
-        // ifrom = tid * 2;
-        // ito = ifrom + 2;
-        // if(ito > nlocal) ito = ifrom;
-
-
-        double dener (0);
-      
         // get coord
         int ago = neighbor->ago;
 
         if (DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD::compute tid {} ifrom {} ito {} nlocal  {} nghost {} ago {}\n", 
                 tid,  ifrom, ito, nlocal, nghost, ago);
-      
+          
+       
         // thread inner part 
         {
           if(ago == 0) {
@@ -339,7 +323,7 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
             // if(DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD tid {} delte local_lmp_list local_nlocal  {}\n",  tid,  local_nlocal);
 
-            for(int i = 0; i < nall; i++){
+            for(int i = 0; i < nall; i++) {
               forward_index_map[tid][i] = -1;
             }
 
@@ -364,7 +348,7 @@ void PairDeepMD::compute(int eflag, int vflag) {
               int global_i_index = local_backward_index_map[local_i_index];
               firstneigh[local_i_index] = &neigh[cur_neigh];
 
-              if(max_nnei < local_numneigh[local_i_index]) error->one(FLERR, "[ERROR] max_nnei < local_numneigh[local_i_index] {} {} ", max_nnei, local_numneigh[local_i_index]);
+              if(max_nlist < local_numneigh[local_i_index]) error->one(FLERR, "[ERROR] max_nlist < local_numneigh[local_i_index] {} {} ", max_nlist, local_numneigh[local_i_index]);
 
               for(int nei_iter = 0; nei_iter < local_numneigh[local_i_index];nei_iter++ ) {
                 int global_j_idx = list->firstneigh[global_i_index][nei_iter];
@@ -379,7 +363,8 @@ void PairDeepMD::compute(int eflag, int vflag) {
               cur_neigh += local_numneigh[local_i_index];
             }
 
-            if(max_nnei*max_nloc <= cur_neigh)   error->one(FLERR, "[ERROR] max_nnei*max_nloc < cur_neigh   {} {} ", max_nnei*max_nloc, cur_neigh);
+            if(max_nlist*max_nloc <= cur_neigh)   error->one(FLERR, "[ERROR] max_nlist*max_nloc < cur_neigh   {} {}, local_nlocal {} ",
+                        max_nlist*max_nloc, cur_neigh, local_nlocal);
 
             local_lmp_list.inum = local_nlocal;
             local_lmp_list.ilist = local_ilist;
@@ -409,12 +394,12 @@ void PairDeepMD::compute(int eflag, int vflag) {
           }
 
           // Pair::lmp->parral_barrier(12, tid);      
-
+          double *_coord = atom->x[0];
           for(int local_index = 0;local_index < local_nall;local_index++) {
             int global_index = local_backward_index_map[local_index];
-            thread_dcoord[tid][local_index*3+0] = dcoord[global_index*3+0];
-            thread_dcoord[tid][local_index*3+1] = dcoord[global_index*3+1];
-            thread_dcoord[tid][local_index*3+2] = dcoord[global_index*3+2];
+            thread_dcoord[tid][local_index*3+0] = _coord[global_index*3+0];
+            thread_dcoord[tid][local_index*3+1] = _coord[global_index*3+1];
+            thread_dcoord[tid][local_index*3+2] = _coord[global_index*3+2];
           }
 
           // if(DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD tid {} finish preprae thread_dcoord {} {} {}\n", 
@@ -436,12 +421,6 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
           deep_pots[tid]->compute (thread_dener[tid], thread_dforce[tid], thread_dvirial[tid], thread_dcoord[tid], thread_dtype[tid], local_nghost, local_nlocal, local_lmp_list, ago);
 
-      // #ifdef HIGH_PREC
-      //     deep_pots[tid]->compute (thread_dener[tid], thread_dforce[tid], thread_dvirial[tid], thread_dcoord[tid], thread_dtype[tid], local_nghost, local_nlocal, local_lmp_list, ago);
-      // #else 
-      //     deep_pots[tid]->compute (thread_dener[tid], thread_dforce[tid], thread_dvirial[tid], thread_dcoord[tid], thread_dtype[tid], local_nghost, local_nlocal, local_lmp_list, ago);
-      // #endif
-
 
           // if(DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD tid {} finish deep_pots[tid]->compute\n", tid);
           // Pair::lmp->parral_barrier(12, tid);  
@@ -457,6 +436,13 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
           // if(DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD tid {} finish force convert \n", tid);
         }
+        #else
+
+        deep_pots[tid]->splite_atom(0);
+        #pragma omp barrier
+        deep_pots[tid]->compute (thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
+
+        #endif
 
         force_reduce(&(f[0][0]), nall, nthreads, 3, tid, scale[1][1]);
 
@@ -469,29 +455,14 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // for(int ii = 0; ii < 12; ii++)
           //   if(DEBUG_MSG) print_v(nall, fmt::format("parallel_dforce {} : ", ii), parallel_dforce[ii].data());
 
-          // for(int _t = 1; _t < nthreads; _t++) {
-          //   for(int ii = 0 ; ii < nall; ii++) {
-          //     f[ii][0] += f[_t*nall+ii][0];
-          //     f[ii][1] += f[_t*nall+ii][1];
-          //     f[ii][2] += f[_t*nall+ii][2];
-          //   }
-          // }
-
-          // if(DEBUG_MSG) print_v(nlocal, fmt::format("parallel_dforce : "), f[0]);
-
-          // get force
-          // for (int ii = 0; ii < nall; ++ii) {
-          //   for (int dd = 0; dd < 3; ++dd) {
-          //     f[ii][dd] *= scale[1][1];
-          //   }
-          // }
 
           // print_v(nall, fmt::format("parallel_dforce scale: "), f[0]);
           
           // // accumulate energy and virial
 
           if (eflag) {
-            for(int i = 0;i<nthreads;i++){
+            double dener = 0;
+            for(int i = 0;i < nthreads;i++){
               dener += thread_dener[i];
             }
             eng_vdwl += scale[1][1] * dener;
@@ -616,7 +587,12 @@ void PairDeepMD::settings(int narg, char **arg)
   // if (narg != 2) error->all(FLERR, "Illegal pair_style command");
 
   int iarg = 0;
+  int dipole_flag; 
 
+
+  // if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] dipole_flag  : {} \n", arg[iarg++]));
+
+  dipole_flag = string(arg[iarg++]) == string("dipole");
   cutoff = rcut = utils::numeric(FLERR, arg[iarg++], false, Pair::lmp);
   rcut_smth = utils::numeric(FLERR, arg[iarg++], false, Pair::lmp);
   numb_types = utils::numeric(FLERR, arg[iarg++], false, Pair::lmp);
@@ -643,10 +619,10 @@ void PairDeepMD::settings(int narg, char **arg)
   dbox[6] = domain->h[4];	// zx
   dbox[3] = domain->h[5];	// yx
 
-  if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] begin init deep_pot \n"));
+  if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] begin init deep_pot dipole_flag {}\n", dipole_flag));
 
   deep_pot = new DeepPot(Pair::lmp);
-  deep_pot->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path);
+  deep_pot->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path, dipole_flag);
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] finish init deep_pot \n"));
 
   deep_pots = new DeepPot*[num_threads];
@@ -660,6 +636,7 @@ void PairDeepMD::settings(int narg, char **arg)
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] num_threads : {} \n", num_threads));
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] numb_types  : {} \n", numb_types));
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] narg        : {} \n", narg));
+  if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] dipole_flag : {} \n", dipole_flag));
 
   out_freq = 100;
   out_file = "model_devi.out";

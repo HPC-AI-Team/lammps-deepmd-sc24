@@ -1,7 +1,7 @@
 #ifndef DEEPMD_COMMON_H
 #define DEEPMD_COMMON_H 
 
-// #define WITH_TENSOR_FLOW
+#define WITH_TENSOR_FLOW
 // #define COMBIN_OMP
 
 #define SPLIT_TYPE_EMBEDDING
@@ -10,7 +10,7 @@
 
 // #define _TABULATE_FITTING
 
-// #define HIGH_PREC
+#define HIGH_PREC
 
 // #define TABLE_V1
 

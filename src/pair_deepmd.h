@@ -63,16 +63,18 @@ class PairDeepMD : public Pair, public ThrOMP {
   // std::string get_file_content(const std::string & model);
   // std::vector<std::string> get_file_content(const std::vector<std::string> & models);
 
- protected:  
+protected:  
   virtual void allocate();
   double **scale;
 
-private:  
-  int first_time[T_THREAD] = {0};
+public:
   DeepPot *deep_pot;
   DeepPot **deep_pots;
+  
+private:  
+  int first_time[T_THREAD] = {0};
   int num_threads = 1;
-  // std::vector<std::vector<int>> backward_index_maps;
+
   int ** backward_index_maps;
   int * backward_index_size;
   std::vector<InputNlist> lmp_lists;  
@@ -81,7 +83,7 @@ private:
   int**  thread_local_ilist;
   int**  thread_local_numneigh;
   int*** thread_firstneigh;
-  int **forward_index_map;
+  int**  forward_index_map;
 
 
   std::string graph_path;
@@ -100,7 +102,7 @@ private:
 
   int max_nall;
   int max_nloc;
-  int max_nnei;
+  int max_nlist;
 
   double* dvirial;
   double** thread_dvirial;
