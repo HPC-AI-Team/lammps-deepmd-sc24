@@ -277,7 +277,6 @@ void matmul(const int m, const int n, const int k,
     alpha,A,k,
     B,n,
     beta,D,n); 
-
 }
 
 void matmul(const int m, const int n, const int k,
@@ -373,7 +372,7 @@ void matmul_3d(const int t, const int m, const int n, const int k,
   float beta = 0.;
 
   int lda=_transpose_a ? m : k;
-  int ldb=_transpose_b? k : n;
+  int ldb=_transpose_b ? k : n;
   int ldc=n;
 
   CBLAS_TRANSPOSE transpose_a = _transpose_a ? CblasTrans : CblasNoTrans;

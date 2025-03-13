@@ -220,16 +220,17 @@ public:
 typedef struct Session_Buf_Struct {
   FPTYPE** dout_tabulate;
   FPTYPE** xyz_scatter_2;
-  FPTYPE** xyz_scatter_1;
+  FPTYPE** rg_fusion_matrix;
+  FPTYPE** qmat, **qmat_grad;
 
   FPTYPE** xyz_scatter_grad;
   FPTYPE** inputs_i_in_grad;
 
   FPTYPE *inputs_i_grad;
-  FPTYPE *layer_0, *layer_1, *layer_2, *layer_f;
+  FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
-  FPTYPE *layer_1_grad_reg, *layer_2_grad_reg;
+  FPTYPE *layer_1_grad_reg, *layer_2_grad_reg, *layer_final_grad;
 
   __fp16 *gemm_fp16_buf;
 
@@ -265,7 +266,7 @@ public:
   void store_pb_data();
   void table_convert(FPTYPE** &_in_table, int _ntypes);
   
-  void compute (ENERGYTYPE &	ener,
+  void compute (double &	ener,
 		double* &	force,
 		double* &	virial,
 		FPTYPE* &	coord,
@@ -276,17 +277,20 @@ public:
 		const int&			ago,
     int _current_model = 0);
 
-  void compute (ENERGYTYPE &	ener,
-		double* &	force,
-		double* &	virial,
+  void compute (double *ener,
+		double*	force,
+		double*	virial,
     int _current_model = 0);
 
   void session_run ();
 
   void prod_env_mat_a();
 
-  void fitting_net(int type_i, Session_Buf *sess_buf);
-  void embedding_net(int type_i, Session_Buf *sess_buf);
+  void fitting_net_dipole(int type_i);
+  void fitting_net_normal(int type_i);
+  void embedding_net(int type_i);
+  void prod_R_matrix(int type_i);
+  void prod_atom_nlist();
 
   void tabulateFusion(int _loc, int _nnei,
                       FPTYPE* &em_x,
@@ -491,7 +495,27 @@ private:
   double 	dener;
 
   FPTYPE** rij, **descrpt, **descrpt_deriv;
-  FPTYPE** xyz_scatter;
+  FPTYPE** s_vector;
+
+  FPTYPE** dout_tabulate;
+  FPTYPE** xyz_scatter_2;
+  FPTYPE** rg_fusion_matrix;
+  FPTYPE** qmat, **qmat_grad;
+
+  FPTYPE** xyz_scatter_grad;
+  FPTYPE** inputs_i_in_grad;
+
+  FPTYPE *inputs_i_grad;
+  FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
+  FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
+  FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
+  FPTYPE *layer_1_grad_reg, *layer_2_grad_reg, *layer_final_grad;
+
+  __fp16 *gemm_fp16_buf;
+
+  FPTYPE *xyz_scatter_1_grad, *xyz_scatter_2_grad;
+
+  FPTYPE *grad_one_matrix;
 
   Session_Buf *sess_bufs, *this_sess;
   void reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei);
