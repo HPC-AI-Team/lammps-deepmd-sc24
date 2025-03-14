@@ -899,14 +899,14 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
   ori_datype = new int[_max_nall];                  memset(ori_datype, 0, _max_nall     * sizeof(int));
 
   rij = new FPTYPE*[ntypes*ntypes];
-  descrpt = new FPTYPE*[ntypes*ntypes];
-  descrpt_deriv = new FPTYPE*[ntypes*ntypes];
+  r_matrix = new FPTYPE*[ntypes*ntypes];
+  r_matrix_deriv = new FPTYPE*[ntypes*ntypes];
   s_vector = new FPTYPE*[ntypes*ntypes];
 
   for(int i = 0; i < ntypes*ntypes; i++) {
     rij[i] = new FPTYPE[_max_nloc * nnei * 3] ;     memset(rij[i], 0, _max_nloc * nnei * 3 * sizeof(FPTYPE));
-    descrpt[i] = new FPTYPE[_max_nloc * ndescrpt] ;     memset(descrpt[i], 0, _max_nloc * ndescrpt * sizeof(FPTYPE));
-    descrpt_deriv[i] = new FPTYPE[_max_nloc * ndescrpt * 3] ;     memset(descrpt_deriv[i], 0, _max_nloc * ndescrpt * 3 * sizeof(FPTYPE));
+    r_matrix[i] = new FPTYPE[_max_nloc * ndescrpt] ;     memset(r_matrix[i], 0, _max_nloc * ndescrpt * sizeof(FPTYPE));
+    r_matrix_deriv[i] = new FPTYPE[_max_nloc * ndescrpt * 3] ;     memset(r_matrix_deriv[i], 0, _max_nloc * ndescrpt * 3 * sizeof(FPTYPE));
     s_vector[i] = new FPTYPE[_max_nloc * max_nnei];  memset(s_vector[i], 0, _max_nloc*max_nnei*sizeof(FPTYPE)); 
   }
 
@@ -935,23 +935,25 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
 }
 
 void DeepPot::reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei) {
-  _sess_buf.xyz_scatter_grad = new FPTYPE*[_ntypes*_ntypes];
-  _sess_buf.inputs_i_in_grad = new FPTYPE*[_ntypes*_ntypes];
+  _sess_buf.s_vector_grad = new FPTYPE*[_ntypes*_ntypes];
+  _sess_buf.r_matrix_grid = new FPTYPE*[_ntypes*_ntypes];
+  for(int dim = 0; dim < 3; dim++) _sess_buf.r_matrix_grid_3d[dim] = new FPTYPE*[_ntypes*_ntypes];
   for(int i = 0; i < _ntypes*_ntypes; i++) {
   
-    _sess_buf.xyz_scatter_grad[i] = new FPTYPE[_max_nloc * _max_nnei];  memset(_sess_buf.xyz_scatter_grad[i], 0, _max_nloc*_max_nnei*sizeof(FPTYPE)); 
-    _sess_buf.inputs_i_in_grad[i] = new FPTYPE[_max_nloc * _max_nnei * 4];  memset(_sess_buf.inputs_i_in_grad[i], 0, _max_nloc*_max_nnei*4*sizeof(FPTYPE)); 
+    _sess_buf.s_vector_grad[i] = new FPTYPE[_max_nloc * _max_nnei];  memset(_sess_buf.s_vector_grad[i], 0, _max_nloc*_max_nnei*sizeof(FPTYPE)); 
+    _sess_buf.r_matrix_grid[i] = new FPTYPE[_max_nloc * _max_nnei * 4];  memset(_sess_buf.r_matrix_grid[i], 0, _max_nloc*_max_nnei*4*sizeof(FPTYPE)); 
+    for(int dim = 0; dim < 3; dim++) {_sess_buf.r_matrix_grid_3d[dim][i] = new FPTYPE[_max_nloc * _max_nnei * 4];  memset(_sess_buf.r_matrix_grid_3d[dim][i], 0, _max_nloc*_max_nnei*4*sizeof(FPTYPE)); }
   }
   
-  _sess_buf.rg_fusion_matrix             = new FPTYPE*[_ntypes];
-  _sess_buf.xyz_scatter_2             = new FPTYPE*[_ntypes];
-  _sess_buf.dout_tabulate             = new FPTYPE*[_ntypes];
+  _sess_buf.rg_fusion             = new FPTYPE*[_ntypes];
+  _sess_buf.rg_silce             = new FPTYPE*[_ntypes];
+  _sess_buf.descrptor             = new FPTYPE*[_ntypes];
   _sess_buf.qmat                      = new FPTYPE*[_ntypes];
   _sess_buf.qmat_grad                      = new FPTYPE*[_ntypes];
   for(int i = 0; i < _ntypes; i++) {
-    _sess_buf.rg_fusion_matrix[i] = new FPTYPE[_max_nloc*4*last_layer_size]; memset(_sess_buf.rg_fusion_matrix[i], 0, _max_nloc*4*last_layer_size*sizeof(FPTYPE)); 
-    _sess_buf.xyz_scatter_2[i] = new FPTYPE[_max_nloc*4*n_axis_neuron];   memset(_sess_buf.xyz_scatter_2[i], 0, _max_nloc*4*n_axis_neuron*sizeof(FPTYPE)); 
-    _sess_buf.dout_tabulate[i] = new FPTYPE[_max_nloc*last_layer_size*n_axis_neuron];   memset(_sess_buf.dout_tabulate[i], 0, _max_nloc*last_layer_size*n_axis_neuron*sizeof(FPTYPE)); 
+    _sess_buf.rg_fusion[i] = new FPTYPE[_max_nloc*4*last_layer_size]; memset(_sess_buf.rg_fusion[i], 0, _max_nloc*4*last_layer_size*sizeof(FPTYPE)); 
+    _sess_buf.rg_silce[i] = new FPTYPE[_max_nloc*4*n_axis_neuron];   memset(_sess_buf.rg_silce[i], 0, _max_nloc*4*n_axis_neuron*sizeof(FPTYPE)); 
+    _sess_buf.descrptor[i] = new FPTYPE[_max_nloc*last_layer_size*n_axis_neuron];   memset(_sess_buf.descrptor[i], 0, _max_nloc*last_layer_size*n_axis_neuron*sizeof(FPTYPE)); 
     
     if(dipole_flag) {
       _sess_buf.qmat[i]               =  new FPTYPE[_max_nloc*3*last_layer_size];   memset(_sess_buf.qmat[i], 0, _max_nloc*3*last_layer_size*sizeof(FPTYPE)); 
@@ -960,7 +962,7 @@ void DeepPot::reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neu
     }
   }
   
-  _sess_buf.inputs_i_grad = new FPTYPE[_max_nloc * dim_descrpt];     memset(_sess_buf.inputs_i_grad, 0, sizeof(FPTYPE)* _max_nloc * dim_descrpt   );
+  _sess_buf.descrptor_grad = new FPTYPE[_max_nloc * dim_descrpt];     memset(_sess_buf.descrptor_grad, 0, sizeof(FPTYPE)* _max_nloc * dim_descrpt   );
   _sess_buf.layer_0 = new FPTYPE[_max_nloc * n_neuron[0]];           memset(_sess_buf.layer_0, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]         );
   _sess_buf.layer_1 = new FPTYPE[_max_nloc * n_neuron[1]];           memset(_sess_buf.layer_1, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]         );
   _sess_buf.layer_2 = new FPTYPE[_max_nloc * n_neuron[2]];           memset(_sess_buf.layer_2, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]         );
@@ -978,8 +980,8 @@ void DeepPot::reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neu
   
   _sess_buf.gemm_fp16_buf = new float16_t[_max_nloc * (n_neuron[0] + dim_descrpt)];  memset(_sess_buf.gemm_fp16_buf, 0, sizeof(float16_t)* _max_nloc * (n_neuron[0] + dim_descrpt));
   
-  _sess_buf.xyz_scatter_1_grad = new FPTYPE[_max_nloc * last_layer_size * 4];  memset(_sess_buf.xyz_scatter_1_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size * 4);
-  _sess_buf.xyz_scatter_2_grad = new FPTYPE[_max_nloc * n_axis_neuron * 4];    memset(_sess_buf.xyz_scatter_2_grad, 0, sizeof(FPTYPE)* _max_nloc * n_axis_neuron * 4);
+  _sess_buf.rg_fusion_grad = new FPTYPE[_max_nloc * last_layer_size * 4];  memset(_sess_buf.rg_fusion_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size * 4);
+  _sess_buf.rg_slice_grad = new FPTYPE[_max_nloc * n_axis_neuron * 4];    memset(_sess_buf.rg_slice_grad, 0, sizeof(FPTYPE)* _max_nloc * n_axis_neuron * 4);
   
 }
 
@@ -1645,16 +1647,17 @@ void DeepPot::swith_model(int _current_model) {
     this_sess = &sess_bufs[1];
   }
 
-  dout_tabulate = this_sess->dout_tabulate; 
-  xyz_scatter_2 = this_sess->xyz_scatter_2; 
-  rg_fusion_matrix = this_sess->rg_fusion_matrix; 
+  descrptor = this_sess->descrptor; 
+  rg_silce = this_sess->rg_silce; 
+  rg_fusion = this_sess->rg_fusion; 
   qmat          = this_sess->qmat;
   qmat_grad     = this_sess->qmat_grad;
 
-  xyz_scatter_grad = this_sess->xyz_scatter_grad;
-  inputs_i_in_grad = this_sess->inputs_i_in_grad;
+  s_vector_grad = this_sess->s_vector_grad;
+  r_matrix_grid = this_sess->r_matrix_grid;
+  for(int dim = 0; dim < 3; dim++) r_matrix_grid_3d[dim] = this_sess->r_matrix_grid_3d[dim];
 
-  inputs_i_grad = this_sess->inputs_i_grad;
+  descrptor_grad = this_sess->descrptor_grad;
   layer_0 = this_sess->layer_0;
   layer_1 = this_sess->layer_1;
   layer_2 = this_sess->layer_2;
@@ -1671,8 +1674,8 @@ void DeepPot::swith_model(int _current_model) {
   layer_final_grad = this_sess->layer_final_grad;
 
   gemm_fp16_buf = this_sess->gemm_fp16_buf;
-  xyz_scatter_1_grad = this_sess->xyz_scatter_1_grad;
-  xyz_scatter_2_grad = this_sess->xyz_scatter_2_grad;
+  rg_fusion_grad = this_sess->rg_fusion_grad;
+  rg_slice_grad = this_sess->rg_slice_grad;
 }
 
 // dforce_为 parallel_force
@@ -1866,36 +1869,36 @@ void DeepPot::embedding_net(int type_i) {
 
   int start_index = sec_type_atom[type_i];
 
-  memset(rg_fusion_matrix[type_i], 0, type_natoms[type_i] * 4 * last_layer_size * sizeof(FPTYPE));
+  memset(rg_fusion[type_i], 0, type_natoms[type_i] * 4 * last_layer_size * sizeof(FPTYPE));
 
   for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
     int t_ptr = type_i * ntypes + type_i_in;
 
     if(comm->tabulate_flag == 5) {
-      tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], descrpt[t_ptr], rg_fusion_matrix[type_i], c_table[t_ptr]);
-      // tabulateFusion(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], descrpt[t_ptr], rg_fusion_matrix[type_i], c_table[t_ptr]);
+      tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
+      // tabulateFusion(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
     } else if(comm->tabulate_flag == 1) {
-      tabulateFusion_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], descrpt[t_ptr], rg_fusion_matrix[type_i], c_table[t_ptr]);
+      tabulateFusion_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
     }
 
     if(DEBUG_MSG)  if(tid == 0) print_v(sel[type_i_in], fmt::format(" tabluate out s_vector[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), s_vector[t_ptr]);
-    if(DEBUG_MSG)  if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format(" tabluate out descrpt[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]);
+    if(DEBUG_MSG)  if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format(" tabluate out r_matrix[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), r_matrix[t_ptr]);
     //  if(DEBUG_MSG)  if(tid == 0) print_v(768, fmt::format(" tabluate out c_table[t_ptr] type_i {} type_i_in {}", type_i, type_i_in), c_table[t_ptr]);
-    if(DEBUG_MSG)  if(tid == 0) print_v(last_layer_size * 4, fmt::format(" tabluate out rg_fusion_matrix[type_i] type_i {} type_i_in {}", type_i, type_i_in), rg_fusion_matrix[type_i]);
+    if(DEBUG_MSG)  if(tid == 0) print_v(last_layer_size * 4, fmt::format(" tabluate out rg_fusion[type_i] type_i {} type_i_in {}", type_i, type_i_in), rg_fusion[type_i]);
     if(DEBUG_MSG)  if(tid == 0) printf("\n\n");
   }
   
   for(int _i = 0; _i < type_natoms[type_i] * 4 * last_layer_size; _i++) {
-    rg_fusion_matrix[type_i][_i] *= 4.0 / ndescrpt;
+    rg_fusion[type_i][_i] *= 4.0 / ndescrpt;
   }
 
   t_timer->stamp(Timer::TABULATE);
 
-  if(DEBUG_MSG)  if(tid == 0) print_v(last_layer_size * 4, fmt::format("rg_fusion_matrix[type_i] type_i {} ", type_i), rg_fusion_matrix[type_i]);
+  if(DEBUG_MSG)  if(tid == 0) print_v(last_layer_size * 4, fmt::format("rg_fusion[type_i] type_i {} ", type_i), rg_fusion[type_i]);
 
   for(int ii = 0, kk = 0; ii < type_natoms[type_i] * 4 * last_layer_size; ii+=last_layer_size, kk+=n_axis_neuron) {
     for(int jj = 0; jj < n_axis_neuron; jj++){
-      xyz_scatter_2[type_i][kk+jj] = rg_fusion_matrix[type_i][ii+jj];
+      rg_silce[type_i][kk+jj] = rg_fusion[type_i][ii+jj];
     }
   }
   
@@ -1908,17 +1911,17 @@ void DeepPot::embedding_net(int type_i) {
           int _y = (ll / last_layer_size) % 3;
           int _z = ll / last_layer_size / 3;
           int new_ptr = (_z * last_layer_size + _x) * 3 + _y;
-          qmat[type_i][new_ptr] = rg_fusion_matrix[type_i][(ii * 4 + jj) * last_layer_size + kk];
+          qmat[type_i][new_ptr] = rg_fusion[type_i][(ii * 4 + jj) * last_layer_size + kk];
           ll++;
         }
   }
 
-  memset(dout_tabulate[type_i], 0, sizeof(FPTYPE) * type_natoms[type_i] * last_layer_size * n_axis_neuron);
+  memset(descrptor[type_i], 0, sizeof(FPTYPE) * type_natoms[type_i] * last_layer_size * n_axis_neuron);
 
-  matmul_3d(type_natoms[type_i], last_layer_size, n_axis_neuron, 4, rg_fusion_matrix[type_i], xyz_scatter_2[type_i], dout_tabulate[type_i], true, false);
+  matmul_3d(type_natoms[type_i], last_layer_size, n_axis_neuron, 4, rg_fusion[type_i], rg_silce[type_i], descrptor[type_i], true, false);
   t_timer->stamp(Timer::EM_MUT_3D);
 
-  if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size * n_axis_neuron, fmt::format("dout_tabulate[type_i] type_i {}\n",type_i ), dout_tabulate[type_i]);
+  if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size * n_axis_neuron, fmt::format("descrptor[type_i] type_i {}\n",type_i ), descrptor[type_i]);
   if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size * 3, fmt::format("qmat[type_i]          type_i {}\n",type_i ), qmat[type_i]);
 }
 
@@ -1929,9 +1932,9 @@ void DeepPot::fitting_net_dipole(int type_i) {
   t_timer->stamp();
 
   if(comm->fp16_flag) {
-    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  dout_tabulate[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
   } else {
-    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  dout_tabulate[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   }
 
   t_timer->stamp(Timer::MATMUL_ADD_0);
@@ -1975,140 +1978,161 @@ void DeepPot::fitting_net_dipole(int type_i) {
 
   matmul_3d(type_natoms[type_i], 1, 3, last_layer_size, layer_final, qmat[type_i], layer_final_qmat, false, false);
 
-  if(DEBUG_MSG) if(tid == 0) print_v(type_natoms[type_i] * 3, fmt::format("layer_final_qmat type_{}: ", type_i), layer_final_qmat);
+  if(DEBUG_MSG) if(tid == 0) print_v(type_natoms[type_i] * 3, fmt::format("dipole layer_final_qmat type_{}: ", type_i), layer_final_qmat);
 
-  // for(int dom = 0; dom < 3; dom++) 
-  for(int i = 0; i < type_natoms[type_i]; i++ ) {
-    grad_one_matrix[i * 3 + 0] = 1; grad_one_matrix[i * 3 + 1] = 1; grad_one_matrix[i * 3 + 2] = 1;
-  }
+  for(int dim = 0; dim < 3; dim++) {
 
-  matmul_3d(type_natoms[type_i], 1, last_layer_size, 3, grad_one_matrix, qmat[type_i], layer_final_grad, false, true);
-  if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size, fmt::format("layer_final_grad type_{}: ", type_i), layer_final_grad);
-
-  matmul_3d(type_natoms[type_i], last_layer_size, 3, 1, layer_final, grad_one_matrix, qmat_grad[type_i], true, false);
-  if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size*3, fmt::format("qmat_grad type_{}: ", type_i), qmat_grad[type_i]);
-  
-  matmul(type_natoms[type_i], n_neuron[2], last_layer_size, layer_final_grad, c_matrix_t[3][type_i], NULL, layer_2_grad_reg);
-  if(DEBUG_MSG) if(tid == 0) print_v(n_neuron[2], fmt::format("layer_2_grad_reg type_{}: ", type_i), layer_2_grad_reg);
-
-  // layer_2_grad
-  idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
-  t_timer->stamp(Timer::IDT_MULT_GRAD);
-  // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
-  fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
-  // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
-  matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
-  t_timer->stamp(Timer::MATMUL_2D_1);
-  // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
-    
-  matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
-  t_timer->stamp(Timer::MATRIX_ADD);
-  // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
-  
-  // layer_1_grad
-  idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
-  t_timer->stamp(Timer::IDT_MULT_GRAD);
-  // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
-  fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
-  // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
-  
-  matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
-  t_timer->stamp(Timer::MATMUL_2D_2);
-  // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
-  
-  matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
-  t_timer->stamp(Timer::MATRIX_ADD);
-  // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
-  
-  // layer_0_grad
-  fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
-  // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
-  
-  if(comm->fp16_flag){
-    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad, gemm_fp16_buf);
-  } else {
-    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
-  }
-  
-  if(DEBUG_MSG) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("descriptor_grad [n * 2048] type_{}: ", type_i), inputs_i_grad);
-  
-  t_timer->stamp(Timer::MATMUL_2D_3);
-  
-  memset(xyz_scatter_1_grad, 0, type_natoms[type_i] * last_layer_size * 4);
-  memset(xyz_scatter_2_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
-  
-  matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, xyz_scatter_2[type_i], inputs_i_grad, xyz_scatter_1_grad, false, true);
-  matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion_matrix[type_i], inputs_i_grad, xyz_scatter_2_grad, false, false);
-  
-  t_timer->stamp(Timer::MATMUL_3D);
-  
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("xyz_scatter_2_grad type_{}: ", type_i), xyz_scatter_2_grad);
-  
-  for(int ii = 0; ii < type_natoms[type_i] * 4; ii++) {
-    for(int jj = 0; jj < n_axis_neuron; jj++) {
-      xyz_scatter_1_grad[ii*last_layer_size+jj] += xyz_scatter_2_grad[ii*n_axis_neuron+jj];
+    for(int i = 0; i < type_natoms[type_i]; i++ ) {
+      grad_one_matrix[i * 3 + 0] = 0; grad_one_matrix[i * 3 + 1] = 0; grad_one_matrix[i * 3 + 2] = 0; 
+      grad_one_matrix[i * 3 + dim] = 1;
     }
-  }
-  // t_timer->stamp(Timer::FIT_SLICE);
-
-  int ll = 0;
-  for(int ii = 0 ; ii < type_natoms[type_i]; ii++) 
-    for(int jj = 1 ; jj < 4; jj++) 
-      for(int kk = 0 ; kk < last_layer_size; kk++) {
-        // int _x = ll % 3; 
-        // int _y = (ll / 3) % last_layer_size;
-        // int _z = ll / last_layer_size / 3;
-        // int new_ptr = (_z * 3 + _x) * last_layer_size + _y;
-        int _x = ll % last_layer_size; 
-        int _y = (ll / last_layer_size) % 3;
-        int _z = ll / last_layer_size / 3;
-        int new_ptr = (_z * last_layer_size + _x) * 3 + _y;
-        xyz_scatter_1_grad[(ii * 4 + jj) * last_layer_size + kk] += qmat_grad[type_i][new_ptr];
-        ll++;
+  
+    matmul_3d(type_natoms[type_i], 1, last_layer_size, 3, grad_one_matrix, qmat[type_i], layer_final_grad, false, true);
+    if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size, fmt::format("layer_final_grad type_{}: ", type_i), layer_final_grad);
+  
+    matmul_3d(type_natoms[type_i], last_layer_size, 3, 1, layer_final, grad_one_matrix, qmat_grad[type_i], true, false);
+    if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size*3, fmt::format("qmat_grad type_{}: ", type_i), qmat_grad[type_i]);
+    
+    matmul(type_natoms[type_i], n_neuron[2], last_layer_size, layer_final_grad, c_matrix_t[3][type_i], NULL, layer_2_grad_reg);
+    if(DEBUG_MSG) if(tid == 0) print_v(n_neuron[2], fmt::format("layer_2_grad_reg type_{}: ", type_i), layer_2_grad_reg);
+  
+    // layer_2_grad
+    idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
+    t_timer->stamp(Timer::IDT_MULT_GRAD);
+    // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
+    fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
+    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
+    matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
+    t_timer->stamp(Timer::MATMUL_2D_1);
+    // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
+      
+    matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
+    t_timer->stamp(Timer::MATRIX_ADD);
+    // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
+    
+    // layer_1_grad
+    idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
+    t_timer->stamp(Timer::IDT_MULT_GRAD);
+    // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
+    fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
+    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
+    
+    matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
+    t_timer->stamp(Timer::MATMUL_2D_2);
+    // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
+    
+    matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
+    t_timer->stamp(Timer::MATRIX_ADD);
+    // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
+    
+    // layer_0_grad
+    fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
+    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
+    
+    if(comm->fp16_flag){
+      matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, descrptor_grad, gemm_fp16_buf);
+    } else {
+      matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
+    }
+    
+    if(DEBUG_MSG) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("dipole descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
+    
+    t_timer->stamp(Timer::MATMUL_2D_3);
+    
+    memset(rg_fusion_grad, 0, type_natoms[type_i] * last_layer_size * 4);
+    memset(rg_slice_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
+    
+    matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, rg_silce[type_i], descrptor_grad, rg_fusion_grad, false, true);
+    matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion[type_i], descrptor_grad, rg_slice_grad, false, false);
+    
+    t_timer->stamp(Timer::MATMUL_3D);
+    
+    if(DEBUG_MSG) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("dipole rg_slice_grad type_{}: ", type_i), rg_slice_grad);
+    
+    for(int ii = 0; ii < type_natoms[type_i] * 4; ii++) {
+      for(int jj = 0; jj < n_axis_neuron; jj++) {
+        rg_fusion_grad[ii*last_layer_size+jj] += rg_slice_grad[ii*n_axis_neuron+jj];
       }
-  
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("xyz_scatter_1_grad  type_{}: ", type_i), xyz_scatter_1_grad);
-  
-  for(int ii = 0; ii < type_natoms[type_i] * 4 * last_layer_size; ii++) {
-    xyz_scatter_1_grad[ii] *= 4.0 / ndescrpt;
-  }
-  // t_timer->stamp(Timer::FITTING_NET);
-  
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("xyz_scatter_1_grad after / type_{}: ", type_i), xyz_scatter_1_grad);
-  
-  for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
+    }
+    // t_timer->stamp(Timer::FIT_SLICE);
+
+    int ll = 0;
+    for(int ii = 0 ; ii < type_natoms[type_i]; ii++) 
+      for(int jj = 1 ; jj < 4; jj++) 
+        for(int kk = 0 ; kk < last_layer_size; kk++) {
+          int _x = ll % last_layer_size; 
+          int _y = (ll / last_layer_size) % 3;
+          int _z = ll / last_layer_size / 3;
+          int new_ptr = (_z * last_layer_size + _x) * 3 + _y;
+          rg_fusion_grad[(ii * 4 + jj) * last_layer_size + kk] += qmat_grad[type_i][new_ptr];
+          ll++;
+        }
+    
+    if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("dipole rg_fusion_grad  type_{}: ", type_i), rg_fusion_grad);
+    
+    for(int ii = 0; ii < type_natoms[type_i] * 4 * last_layer_size; ii++) {
+      rg_fusion_grad[ii] *= 4.0 / ndescrpt;
+    }
+    // t_timer->stamp(Timer::FITTING_NET);
+    
+    if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("dipole rg_fusion_grad after / type_{}: ", type_i), rg_fusion_grad);
+
     t_timer->stamp();
-    int t_ptr = type_i * ntypes + type_i_in;
+    int t_ptr = type_i * ntypes + type_i;
   
     if(comm->tabulate_flag == 5) {
-      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], descrpt[t_ptr], xyz_scatter_1_grad);
+      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
+            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
     } else if(comm->tabulate_flag == 1) {
-      tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], descrpt[t_ptr], xyz_scatter_1_grad);
+      tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
+            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
     }
   
-    for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
-        inputs_i_in_grad[t_ptr][ii*4] += xyz_scatter_grad[t_ptr][ii];
+    for(int ii = 0; ii < type_natoms[type_i] * sel[type_i]; ii++) {
+        r_matrix_grid_3d[dim][t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
     }
   
     t_timer->stamp(Timer::TABULATE_GRAD);
   
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("xyz_scatter_grad {} {}:", type_i, type_i_in), xyz_scatter_grad[t_ptr]);
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("inputs_i_in_grad {} {}:", type_i, type_i_in), inputs_i_in_grad[t_ptr]);
-  
-    prod_force_a_cpu(inputs_i_in_grad[t_ptr],
-              type_i, type_i_in);
-    if(update->ntimestep == output->next || update->ntimestep == 0) {
-      prod_virial_a_cpu(inputs_i_in_grad[t_ptr],
-                type_i, type_i_in);
-    } 
+    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i] * 1, fmt::format("dipole s_vector_grad {} {}:", type_i, type_i), s_vector_grad[t_ptr]);
+    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i] * 4, fmt::format("dipole r_matrix_grid_3d[{}] {} {}:", dim, type_i, type_i), r_matrix_grid_3d[dim][t_ptr]);
   
     t_timer->stamp(Timer::PROD_FV);
   }
+  
+  // for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
+  //   t_timer->stamp();
+  //   int t_ptr = type_i * ntypes + type_i_in;
+  
+  //   if(comm->tabulate_flag == 5) {
+  //     tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
+  //           c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+  //   } else if(comm->tabulate_flag == 1) {
+  //     tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
+  //           c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+  //   }
+  
+  //   for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
+  //       r_matrix_grid[t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
+  //   }
+  
+  //   t_timer->stamp(Timer::TABULATE_GRAD);
+  
+  //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
+  //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("r_matrix_grid {} {}:", type_i, type_i_in), r_matrix_grid[t_ptr]);
+  
+  //   prod_force_a_cpu(r_matrix_grid[t_ptr],
+  //             type_i, type_i_in);
+  //   if(update->ntimestep == output->next || update->ntimestep == 0) {
+  //     prod_virial_a_cpu(r_matrix_grid[t_ptr],
+  //               type_i, type_i_in);
+  //   } 
+  
+  //   t_timer->stamp(Timer::PROD_FV);
+  // }
 }
 
 void DeepPot::fitting_net_normal(int type_i) {
@@ -2117,9 +2141,9 @@ void DeepPot::fitting_net_normal(int type_i) {
   t_timer->stamp();
 
   if(comm->fp16_flag) {
-    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  dout_tabulate[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
   } else {
-    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  dout_tabulate[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   }
 
   t_timer->stamp(Timer::MATMUL_ADD_0);
@@ -2220,68 +2244,68 @@ void DeepPot::fitting_net_normal(int type_i) {
   // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
   
   if(comm->fp16_flag){
-    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, inputs_i_grad, gemm_fp16_buf);
+    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, descrptor_grad, gemm_fp16_buf);
   } else {
-    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, inputs_i_grad);
+    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
   }
   
-  if(DEBUG_MSG) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("descriptor_grad [n * 2048] type_{}: ", type_i), inputs_i_grad);
+  if(DEBUG_MSG) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
   
   
   t_timer->stamp(Timer::MATMUL_2D_3);
   
-  memset(xyz_scatter_1_grad, 0, type_natoms[type_i] * last_layer_size * 4);
-  memset(xyz_scatter_2_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
+  memset(rg_fusion_grad, 0, type_natoms[type_i] * last_layer_size * 4);
+  memset(rg_slice_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
   
-  matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, xyz_scatter_2[type_i], inputs_i_grad, xyz_scatter_1_grad, false, true);
-  matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion_matrix[type_i], inputs_i_grad, xyz_scatter_2_grad, false, false);
+  matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, rg_silce[type_i], descrptor_grad, rg_fusion_grad, false, true);
+  matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion[type_i], descrptor_grad, rg_slice_grad, false, false);
   
   t_timer->stamp(Timer::MATMUL_3D);
   
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("xyz_scatter_2_grad type_{}: ", type_i), xyz_scatter_2_grad);
+  if(DEBUG_MSG) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("rg_slice_grad type_{}: ", type_i), rg_slice_grad);
   
   for(int ii = 0; ii < type_natoms[type_i] * 4; ii++) {
     for(int jj = 0; jj < n_axis_neuron; jj++) {
-      xyz_scatter_1_grad[ii*last_layer_size+jj] += xyz_scatter_2_grad[ii*n_axis_neuron+jj];
+      rg_fusion_grad[ii*last_layer_size+jj] += rg_slice_grad[ii*n_axis_neuron+jj];
     }
   }
   // t_timer->stamp(Timer::FIT_SLICE);
 
   
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("xyz_scatter_1_grad  type_{}: ", type_i), xyz_scatter_1_grad);
+  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("rg_fusion_grad  type_{}: ", type_i), rg_fusion_grad);
   
   for(int ii = 0; ii < type_natoms[type_i] * 4 * last_layer_size; ii++) {
-    xyz_scatter_1_grad[ii] *= 4.0 / ndescrpt;
+    rg_fusion_grad[ii] *= 4.0 / ndescrpt;
   }
   // t_timer->stamp(Timer::FITTING_NET);
   
-  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("xyz_scatter_1_grad after / type_{}: ", type_i), xyz_scatter_1_grad);
+  if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("rg_fusion_grad after / type_{}: ", type_i), rg_fusion_grad);
   
   for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
     t_timer->stamp();
     int t_ptr = type_i * ntypes + type_i_in;
   
     if(comm->tabulate_flag == 5) {
-      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], descrpt[t_ptr], xyz_scatter_1_grad);
+      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
+            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
     } else if(comm->tabulate_flag == 1) {
-      tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], xyz_scatter_grad[t_ptr], inputs_i_in_grad[t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], descrpt[t_ptr], xyz_scatter_1_grad);
+      tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
+            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
     }
   
     for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
-        inputs_i_in_grad[t_ptr][ii*4] += xyz_scatter_grad[t_ptr][ii];
+        r_matrix_grid[t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
     }
   
     t_timer->stamp(Timer::TABULATE_GRAD);
   
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("xyz_scatter_grad {} {}:", type_i, type_i_in), xyz_scatter_grad[t_ptr]);
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("inputs_i_in_grad {} {}:", type_i, type_i_in), inputs_i_in_grad[t_ptr]);
+    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
+    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("r_matrix_grid {} {}:", type_i, type_i_in), r_matrix_grid[t_ptr]);
   
-    prod_force_a_cpu(inputs_i_in_grad[t_ptr],
+    prod_force_a_cpu(r_matrix_grid[t_ptr],
               type_i, type_i_in);
     if(update->ntimestep == output->next || update->ntimestep == 0) {
-      prod_virial_a_cpu(inputs_i_in_grad[t_ptr],
+      prod_virial_a_cpu(r_matrix_grid[t_ptr],
                 type_i, type_i_in);
     } 
   
@@ -2370,9 +2394,9 @@ void DeepPot::prod_atom_nlist() {
 void DeepPot::prod_R_matrix(int type_i) {
   for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
     int t_ptr = type_i * ntypes + type_i_in;
-    memset(descrpt[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
+    memset(r_matrix[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
     memset(s_vector[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in]);
-    memset(descrpt_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
+    memset(r_matrix_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
   }
 
   if(DEBUG_MSG) if(tid == 0) utils::logmesg(lmp, fmt::format("[info] clear memory \n"));
@@ -2386,9 +2410,9 @@ void DeepPot::prod_R_matrix(int type_i) {
     // 对每一类邻居进行for循环
     for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
       int t_ptr = type_i * ntypes + type_i_in;
-      FPTYPE* d_em_a        = descrpt[t_ptr] + _ii * sel[type_i_in] * 4;
+      FPTYPE* d_em_a        = r_matrix[t_ptr] + _ii * sel[type_i_in] * 4;
       FPTYPE* d_xyz_scatter = s_vector[t_ptr] + _ii * sel[type_i_in];
-      FPTYPE* d_em_a_deriv = descrpt_deriv[t_ptr] + _ii * sel[type_i_in] * 4 * 3;
+      FPTYPE* d_em_a_deriv = r_matrix_deriv[t_ptr] + _ii * sel[type_i_in] * 4 * 3;
       FPTYPE* d_rij_a = rij[t_ptr] + _ii * sel[type_i_in] * 3;
 
       for (int jj = 0; jj < sel[type_i_in] * 4; ++jj) {
@@ -2475,17 +2499,17 @@ void DeepPot::prod_R_matrix(int type_i) {
       }
       
       if(_ii == 0) {
-        if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4, fmt::format("prod_env_mat atom 0 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]);
+        if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4, fmt::format("prod_env_mat atom 0 r_matrix : type_i {} type_i_in {}", type_i, type_i_in), r_matrix[t_ptr]);
         if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in], fmt::format("prod_env_mat atom 0 s_vector : type_i {} type_i_in {}", type_i, type_i_in), s_vector[t_ptr]);
-        if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 0 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]);
+        if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 0 r_matrix_deriv : type_i {} type_i_in {}", type_i, type_i_in), r_matrix_deriv[t_ptr]);
         if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3, fmt::format("prod_env_mat atom 0 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]);
         // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 nlist : type_i {} type_i_in {}", type_i, type_i_in), nlist);
       }
 
       // if(_ii == 5) {
-      //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4,     fmt::format("prod_env_mat atom 5 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]+5*sel[type_i_in]*4);
+      //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4,     fmt::format("prod_env_mat atom 5 r_matrix : type_i {} type_i_in {}", type_i, type_i_in), r_matrix[t_ptr]+5*sel[type_i_in]*4);
       //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in],    fmt::format("prod_env_mat atom 5 s_vector : type_i {} type_i_in {}", type_i, type_i_in), s_vector[t_ptr]+5*sel[type_i_in]);
-      //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 5 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]+5*sel[type_i_in]*4 *3);
+      //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 5 r_matrix_deriv : type_i {} type_i_in {}", type_i, type_i_in), r_matrix_deriv[t_ptr]+5*sel[type_i_in]*4 *3);
       //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3,     fmt::format("prod_env_mat atom 5 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]+5*sel[type_i_in]*3);
       // }
     }
@@ -2496,9 +2520,9 @@ void DeepPot::prod_env_mat_a() {
   for(int type_i = 0; type_i < ntypes; type_i++) {
     for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
       int t_ptr = type_i * ntypes + type_i_in;
-      memset(descrpt[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
+      memset(r_matrix[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
       memset(s_vector[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in]);
-      memset(descrpt_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
+      memset(r_matrix_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
       memset(rij[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 3);
     }
   }
@@ -2563,9 +2587,9 @@ void DeepPot::prod_env_mat_a() {
       // 对每一类邻居进行for循环
       for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
         int t_ptr = type_i * ntypes + type_i_in;
-        FPTYPE* d_em_a        = descrpt[t_ptr] + _ii * sel[type_i_in] * 4;
+        FPTYPE* d_em_a        = r_matrix[t_ptr] + _ii * sel[type_i_in] * 4;
         FPTYPE* d_xyz_scatter = s_vector[t_ptr] + _ii * sel[type_i_in];
-        FPTYPE* d_em_a_deriv = descrpt_deriv[t_ptr] + _ii * sel[type_i_in] * 4 * 3;
+        FPTYPE* d_em_a_deriv = r_matrix_deriv[t_ptr] + _ii * sel[type_i_in] * 4 * 3;
         FPTYPE* d_rij_a = rij[t_ptr] + _ii * sel[type_i_in] * 3;
 
         for (int jj = 0; jj < sel[type_i_in] * 4; ++jj) {
@@ -2656,17 +2680,17 @@ void DeepPot::prod_env_mat_a() {
         }
         
         if(_ii == 0) {
-          if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4, fmt::format("prod_env_mat atom 0 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]);
+          if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4, fmt::format("prod_env_mat atom 0 r_matrix : type_i {} type_i_in {}", type_i, type_i_in), r_matrix[t_ptr]);
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in], fmt::format("prod_env_mat atom 0 s_vector : type_i {} type_i_in {}", type_i, type_i_in), s_vector[t_ptr]);
-          if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 0 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]);
+          if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 0 r_matrix_deriv : type_i {} type_i_in {}", type_i, type_i_in), r_matrix_deriv[t_ptr]);
           if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3, fmt::format("prod_env_mat atom 0 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]);
           // if(DEBUG_MSG) if(tid == 0) print_v(nnei, fmt::format("prod_env_mat atom 0 nlist : type_i {} type_i_in {}", type_i, type_i_in), nlist);
         }
 
         // if(_ii == 5) {
-        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4,     fmt::format("prod_env_mat atom 5 descrpt : type_i {} type_i_in {}", type_i, type_i_in), descrpt[t_ptr]+5*sel[type_i_in]*4);
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4,     fmt::format("prod_env_mat atom 5 r_matrix : type_i {} type_i_in {}", type_i, type_i_in), r_matrix[t_ptr]+5*sel[type_i_in]*4);
         //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in],    fmt::format("prod_env_mat atom 5 s_vector : type_i {} type_i_in {}", type_i, type_i_in), s_vector[t_ptr]+5*sel[type_i_in]);
-        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 5 descrpt_deriv : type_i {} type_i_in {}", type_i, type_i_in), descrpt_deriv[t_ptr]+5*sel[type_i_in]*4 *3);
+        //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*4 *3, fmt::format("prod_env_mat atom 5 r_matrix_deriv : type_i {} type_i_in {}", type_i, type_i_in), r_matrix_deriv[t_ptr]+5*sel[type_i_in]*4 *3);
         //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in]*3,     fmt::format("prod_env_mat atom 5 rij : type_i {} type_i_in {}", type_i, type_i_in), rij[t_ptr]+5*sel[type_i_in]*3);
         // }
       }
@@ -2676,8 +2700,8 @@ void DeepPot::prod_env_mat_a() {
   // if(DEBUG_MSG) if(tid == 0) print_v(2*552, fmt::format("prod_env_mat atom 0 AVG : "), avg_zero);
   // if(DEBUG_MSG) if(tid == 0) print_v(2*552, fmt::format("prod_env_mat atom 0 STD : "), std_ones);
 
-  // print_v(ndescrpt, fmt::format("prod_env_mat atom 1 descrpt : "), descrpt + 64 * ndescrpt);
-  // print_v(ndescrpt * 3, fmt::format("prod_env_mat atom 1 descrpt_deriv : "), descrpt_deriv + 64 * ndescrpt * 3);
+  // print_v(ndescrpt, fmt::format("prod_env_mat atom 1 r_matrix : "), r_matrix + 64 * ndescrpt);
+  // print_v(ndescrpt * 3, fmt::format("prod_env_mat atom 1 r_matrix_deriv : "), r_matrix_deriv + 64 * ndescrpt * 3);
   // print_v(nnei, fmt::format("prod_env_mat atom 1 nlist : "), nlist + 64 * nnei);
 }
 
@@ -3668,7 +3692,7 @@ void DeepPot::prod_force_a_cpu(
   const int _ndescrpt = 4 * sel[type_i_in];
   int t_ptr = type_i * ntypes + type_i_in;
 
-  const FPTYPE * env_deriv = descrpt_deriv[t_ptr]; 
+  const FPTYPE * env_deriv = r_matrix_deriv[t_ptr]; 
 
   // compute force of a frame
   for (int i_idx = sec_type_atom[type_i], ii = 0; i_idx < sec_type_atom[type_i+1]; ++i_idx, ++ii) {
@@ -3723,7 +3747,7 @@ void DeepPot::prod_force_a_cpu(
   const int _ndescrpt = 4 * sel[type_i_in];
   int t_ptr = type_i * ntypes + type_i_in;
 
-  const FPTYPE * env_deriv = descrpt_deriv; 
+  const FPTYPE * env_deriv = r_matrix_deriv; 
 
   // compute force of a frame
   for (int i_idx = sec_type_atom[type_i], ii = 0; i_idx < sec_type_atom[type_i+1]; ++i_idx, ++ii) {
@@ -3759,7 +3783,7 @@ void DeepPot::prod_force_a_cpu(
 
   // int _nnei_t = g_ito - g_ifrom;
 
-  // const FPTYPE * env_deriv = descrpt_deriv;
+  // const FPTYPE * env_deriv = r_matrix_deriv;
 
   // // compute force of a frame
   // for (int i_idx = ifrom, ii = 0; i_idx < ito; ++i_idx, ++ii) {
@@ -3840,7 +3864,7 @@ void DeepPot::prod_virial_a_cpu(
     const int g_ifrom,
     const int g_ito) {
 
-  // const FPTYPE * env_deriv = descrpt_deriv; 
+  // const FPTYPE * env_deriv = r_matrix_deriv; 
 
   // int _nnei_t = g_ito - g_ifrom;
 
@@ -3873,7 +3897,7 @@ void DeepPot::prod_virial_a_cpu(
     const FPTYPE * env_deriv
   ) {
 
-  // const FPTYPE * env_deriv = descrpt_deriv; 
+  // const FPTYPE * env_deriv = r_matrix_deriv; 
 
   // for (int ii = 0; ii < nloc; ++ii){
   //   int i_idx = ii;
@@ -3907,7 +3931,7 @@ void DeepPot::prod_virial_a_cpu(
   const int _ndescrpt = 4 * sel[type_i_in];
   int t_ptr = type_i * ntypes + type_i_in;
 
-  const FPTYPE * env_deriv = descrpt_deriv[t_ptr]; 
+  const FPTYPE * env_deriv = r_matrix_deriv[t_ptr]; 
 
   // compute force of a frame
   for (int i_idx = sec_type_atom[type_i], ii = 0; i_idx < sec_type_atom[type_i+1]; ++i_idx, ++ii) {
@@ -3937,7 +3961,7 @@ void DeepPot::prod_virial_a_cpu(
   const int _ndescrpt = 4 * sel[type_i_in];
   int t_ptr = type_i * ntypes + type_i_in;
 
-  const FPTYPE * env_deriv = descrpt_deriv; 
+  const FPTYPE * env_deriv = r_matrix_deriv; 
 
   // compute force of a frame
   for (int i_idx = sec_type_atom[type_i], ii = 0; i_idx < sec_type_atom[type_i+1]; ++i_idx, ++ii) {

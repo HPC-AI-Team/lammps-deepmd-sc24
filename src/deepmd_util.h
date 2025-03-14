@@ -218,15 +218,16 @@ public:
 };
 
 typedef struct Session_Buf_Struct {
-  FPTYPE** dout_tabulate;
-  FPTYPE** xyz_scatter_2;
-  FPTYPE** rg_fusion_matrix;
+  FPTYPE** descrptor;
+  FPTYPE** rg_silce;
+  FPTYPE** rg_fusion;
   FPTYPE** qmat, **qmat_grad;
 
-  FPTYPE** xyz_scatter_grad;
-  FPTYPE** inputs_i_in_grad;
+  FPTYPE** s_vector_grad;
+  FPTYPE** r_matrix_grid;
+  FPTYPE** r_matrix_grid_3d[3];
 
-  FPTYPE *inputs_i_grad;
+  FPTYPE *descrptor_grad;
   FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
@@ -234,7 +235,7 @@ typedef struct Session_Buf_Struct {
 
   __fp16 *gemm_fp16_buf;
 
-  FPTYPE *xyz_scatter_1_grad, *xyz_scatter_2_grad;
+  FPTYPE *rg_fusion_grad, *rg_slice_grad;
   FPTYPE *buf;
 } Session_Buf;
 
@@ -494,18 +495,19 @@ private:
   double* ori_dforce;
   double 	dener;
 
-  FPTYPE** rij, **descrpt, **descrpt_deriv;
+  FPTYPE** rij, **r_matrix, **r_matrix_deriv;
   FPTYPE** s_vector;
 
-  FPTYPE** dout_tabulate;
-  FPTYPE** xyz_scatter_2;
-  FPTYPE** rg_fusion_matrix;
+  FPTYPE** descrptor;
+  FPTYPE** rg_silce;
+  FPTYPE** rg_fusion;
   FPTYPE** qmat, **qmat_grad;
 
-  FPTYPE** xyz_scatter_grad;
-  FPTYPE** inputs_i_in_grad;
+  FPTYPE** s_vector_grad;
+  FPTYPE** r_matrix_grid;
+  FPTYPE** r_matrix_grid_3d[3];
 
-  FPTYPE *inputs_i_grad;
+  FPTYPE *descrptor_grad;
   FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
@@ -513,7 +515,7 @@ private:
 
   __fp16 *gemm_fp16_buf;
 
-  FPTYPE *xyz_scatter_1_grad, *xyz_scatter_2_grad;
+  FPTYPE *rg_fusion_grad, *rg_slice_grad;
 
   FPTYPE *grad_one_matrix;
 
