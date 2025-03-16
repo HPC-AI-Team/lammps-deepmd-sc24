@@ -30,9 +30,9 @@ extern "C"
 
 using namespace LAMMPS_NS;
 
-inline void task_division(int nthreads, int nall, int tid, int &ifrom, int &ito) {
-  int idelta_i = nall / nthreads;
-  int idelta_j = nall % nthreads;
+inline void task_division(int nthreads, int nloc, int tid, int &ifrom, int &ito) {
+  int idelta_i = nloc / nthreads;
+  int idelta_j = nloc % nthreads;
   int _bias    = idelta_j == 0 ? 0 : 1;
   
   if(tid >= idelta_j) {
@@ -42,8 +42,35 @@ inline void task_division(int nthreads, int nall, int tid, int &ifrom, int &ito)
     ifrom = (idelta_i + _bias) * (tid);
     ito = ifrom + idelta_i + _bias; 
   }
-  ito = (ito > nall) ? nall : ito; 
- }
+  ito = (ito > nloc) ? nloc : ito; 
+}
+
+inline void task_division_selet_real(int nthreads, int nloc, int nloc_real, int tid, int &ifrom, int &ito, int *type, int ntype) {
+
+  int idelta_i = nloc_real / nthreads;
+  int idelta_j = nloc_real % nthreads;
+  int _bias    = idelta_j == 0 ? 0 : 1;
+
+  int _ifrom, _ito;
+  
+  if(tid >= idelta_j) {
+    _ifrom = (idelta_i + _bias) * idelta_j + idelta_i * (tid - idelta_j);
+    _ito = _ifrom + idelta_i; 
+  } else {
+    _ifrom = (idelta_i + _bias) * (tid);
+    _ito = _ifrom + idelta_i + _bias; 
+  }
+  _ito = (_ito > nloc_real) ? nloc_real : _ito; 
+
+  int num = 0; 
+  for(int i = 0; i < nloc; i++) {
+    if(type[i] <= ntype) {
+      num++; 
+      if(num - 1 == _ifrom) ifrom = i;
+      if(num - 1 == _ito) ito = i;
+    }
+  }
+}
 
 inline void locate_xx(
     const FPTYPE& lower, 
@@ -313,7 +340,8 @@ void DeepPot::splite_atom(int _current_model) {
 
   swith_model(_current_model);
 
-  task_division(nthreads, global_nlocal, tid, ifrom, ito);
+  task_division_selet_real(nthreads, global_nlocal, atom->nlocal_real, tid, ifrom, ito, atom->type, ntypes);
+  // task_division(nthreads, global_nlocal, tid, ifrom, ito);
   ifrom = 0;
   if(tid == 0) ito = atom->nlocal;
   else ito = 0;
@@ -324,6 +352,7 @@ void DeepPot::splite_atom(int _current_model) {
   if(ago == 0) {
     backward_index_size = 0;
     for(int global_i_index = ifrom; global_i_index < ito; global_i_index++) {
+      if(atom->type[global_i_index] > ntypes) continue;
       backward_index_map[backward_index_size++] = global_i_index;
     }
     int local_nloc = ago == 0 ? backward_index_size : lmp_list.inum;
@@ -342,34 +371,38 @@ void DeepPot::splite_atom(int _current_model) {
       forward_index_map[i] = -1;
     }
 
-    int total_neigh=0;
+    // int total_neigh=0;
     for(int local_i_index = 0; local_i_index < local_nloc; local_i_index++) {
       int global_i_index = backward_index_map[local_i_index];
       thread_local_ilist[local_i_index] = local_i_index;
       thread_local_numneigh[local_i_index] = list->numneigh[global_i_index];
-      total_neigh += thread_local_numneigh[local_i_index];
+      // total_neigh += thread_local_numneigh[local_i_index];
       forward_index_map[global_i_index] = local_i_index;
     }
 
-    if(DEBUG_MSG) utils::logmesg(lmp, "splite_atom tid {} total_neigh {} \n",  tid,  total_neigh);
-
     int cur_neigh = 0;
-    for(int local_i_index = 0; local_i_index < local_nloc;local_i_index++) {
+    for(int local_i_index = 0; local_i_index < local_nloc; local_i_index++) {
       int global_i_index = backward_index_map[local_i_index];
       thread_firstneigh[local_i_index] = &thread_neigh[cur_neigh];
 
       if(max_nlist < thread_local_numneigh[local_i_index]) error->one(FLERR, "[ERROR] max_nlist < thread_local_numneigh[local_i_index] {} {} ", max_nlist, thread_local_numneigh[local_i_index]);
 
+      int _real_neighbor = 0;
       for(int nei_iter = 0; nei_iter < thread_local_numneigh[local_i_index]; nei_iter++ ) {
         int global_j_idx = list->firstneigh[global_i_index][nei_iter];
+        if(atom->type[global_j_idx] > ntypes) continue;        
+
         int local_j_index = forward_index_map[global_j_idx];
         if(local_j_index == -1){
           local_j_index = local_nall++;
           forward_index_map[global_j_idx] = local_j_index;
           backward_index_map[backward_index_size++] = global_j_idx;
         }
-        thread_firstneigh[local_i_index][nei_iter] = local_j_index;
+        thread_firstneigh[local_i_index][_real_neighbor] = local_j_index;
+        _real_neighbor++;
       }
+      thread_local_numneigh[local_i_index] = _real_neighbor;
+
       cur_neigh += thread_local_numneigh[local_i_index];
     }
 
@@ -379,7 +412,7 @@ void DeepPot::splite_atom(int _current_model) {
     lmp_list.ilist = thread_local_ilist;
     lmp_list.numneigh = thread_local_numneigh;
     lmp_list.firstneigh = thread_firstneigh;
-    assert(cur_neigh == total_neigh);
+    // assert(cur_neigh == total_neigh);
 
     for(int local_index = 0;local_index < local_nall;local_index++) {
       int global_index = backward_index_map[local_index];
@@ -443,7 +476,7 @@ void DeepPot::splite_atom(int _current_model) {
 
     if(DEBUG_MSG) if(tid == 0) print_v(d_nlist_size[0], "[INFO] d_nlist_a  ", d_nlist_a[0]);
     if(DEBUG_MSG) print_v(local_nloc, fmt::format("lmp_list : {}", lmp_list.inum), lmp_list.numneigh);
-    if(DEBUG_MSG) utils::logmesg(lmp, "split tid {} build local_nall local_nloc {} local_nall {} \n",  tid,  local_nloc, local_nall);
+    if(DEBUG_MSG) utils::logmesg(lmp, "split tid {} build local_nloc {} local_nall {} \n",  tid,  local_nloc, local_nall);
   }
 
   #pragma omp barrier
@@ -473,6 +506,31 @@ void DeepPot::splite_atom(int _current_model) {
   // int nghost = nall - local_nloc;
   // nghost = nall - local_nloc;
 }
+
+void DeepPot::shuffer_dextf(int *bd_idx, FPTYPE *delef_) {
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf bd_idx {} \n", nloc),bd_idx, nloc, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf datype {} \n", nloc),datype, nloc, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf dipole_sel_type {} \n", dipole_sel_type.size()),dipole_sel_type.data(), dipole_sel_type.size(), 1 );
+
+  int ndextf = 0;
+  const int *atommap_bkw_map = atommap.get_bkw_map();
+  for(int ii = 0; ii < nloc; ++ii){
+    if (binary_search(dipole_sel_type.begin(), dipole_sel_type.end(), datype[ii])){
+      // selected atom
+      int first_idx = backward_index_map[atommap_bkw_map[ii]];
+      int second_idx = bd_idx[first_idx];
+      assert(second_idx >= 0);
+      dextf[ndextf*3+0] = delef_[second_idx*3+0];
+      dextf[ndextf*3+1] = delef_[second_idx*3+1];
+      dextf[ndextf*3+2] = delef_[second_idx*3+2];
+      ndextf++;
+    }
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf dextf {} \n", ndextf),dextf, ndextf*3, 1 );
+
+}
+
 
 
 #ifdef WITH_TENSOR_FLOW
@@ -893,6 +951,7 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
   dvirial = new double[9];                  memset(dvirial, 0, 9 * sizeof(double));
   dcoord = new FPTYPE[_max_nall * 3];           memset(dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
   datype = new int[_max_nall];                  memset(datype, 0, _max_nall     * sizeof(int));
+  dextf = new FPTYPE[_max_nloc * 3];           memset(dcoord, 0, _max_nloc * 3 * sizeof(FPTYPE));
   
   ori_dforce = new double[_max_nall * 3];           memset(ori_dforce, 0, _max_nall * 3 * sizeof(double));
   ori_dcoord = new FPTYPE[_max_nall * 3];           memset(ori_dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
@@ -1860,7 +1919,7 @@ void DeepPot::session_run () {
 
   if(DEBUG_MSG) if(tid == 0)  print_v(nloc * 3, fmt::format("prod_force_a_cpu dforce \n"), dforce);
   if(DEBUG_MSG) if(tid == 0)  print_v(9, fmt::format("prod_force_a_cpu dvirial \n"), dvirial);
-  if(DEBUG_MSG) if(tid == 0)  print_v(nloc * 3, fmt::format("dforce \n"), dforce);
+  // if(DEBUG_MSG) if(tid == 0)  print_v(nloc * 3, fmt::format("dforce \n"), dforce);
   return;
 }
 
@@ -2080,59 +2139,50 @@ void DeepPot::fitting_net_dipole(int type_i) {
     
     if(DEBUG_MSG) if(tid == 0) print_v(4 * last_layer_size, fmt::format("dipole rg_fusion_grad after / type_{}: ", type_i), rg_fusion_grad);
 
-    t_timer->stamp();
-    int t_ptr = type_i * ntypes + type_i;
-  
-    if(comm->tabulate_flag == 5) {
-      tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
-    } else if(comm->tabulate_flag == 1) {
-      tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+    for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
+      t_timer->stamp();
+      int t_ptr = type_i * ntypes + type_i_in;
+    
+      if(comm->tabulate_flag == 5) {
+        tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
+              c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+      } else if(comm->tabulate_flag == 1) {
+        tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
+              c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+      }
+    
+      for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
+          r_matrix_grid_3d[dim][t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
+      }
+    
+      t_timer->stamp(Timer::TABULATE_GRAD);
+    
+      if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("dipole s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
+      if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("dipole r_matrix_grid_3d[{}] {} {}:", dim, type_i, type_i_in), r_matrix_grid_3d[dim][t_ptr]);
+    
+      t_timer->stamp(Timer::PROD_FV);
     }
-  
-    for(int ii = 0; ii < type_natoms[type_i] * sel[type_i]; ii++) {
-        r_matrix_grid_3d[dim][t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
-    }
-  
-    t_timer->stamp(Timer::TABULATE_GRAD);
-  
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i] * 1, fmt::format("dipole s_vector_grad {} {}:", type_i, type_i), s_vector_grad[t_ptr]);
-    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i] * 4, fmt::format("dipole r_matrix_grid_3d[{}] {} {}:", dim, type_i, type_i), r_matrix_grid_3d[dim][t_ptr]);
-  
-    t_timer->stamp(Timer::PROD_FV);
   }
-  
-  // for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
-  //   t_timer->stamp();
-  //   int t_ptr = type_i * ntypes + type_i_in;
-  
-  //   if(comm->tabulate_flag == 5) {
-  //     tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
-  //           c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
-  //   } else if(comm->tabulate_flag == 1) {
-  //     tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
-  //           c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
-  //   }
-  
-  //   for(int ii = 0; ii < type_natoms[type_i] * sel[type_i_in]; ii++) {
-  //       r_matrix_grid[t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
-  //   }
-  
-  //   t_timer->stamp(Timer::TABULATE_GRAD);
-  
-  //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
-  //   if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("r_matrix_grid {} {}:", type_i, type_i_in), r_matrix_grid[t_ptr]);
-  
-  //   prod_force_a_cpu(r_matrix_grid[t_ptr],
-  //             type_i, type_i_in);
-  //   if(update->ntimestep == output->next || update->ntimestep == 0) {
-  //     prod_virial_a_cpu(r_matrix_grid[t_ptr],
-  //               type_i, type_i_in);
-  //   } 
-  
-  //   t_timer->stamp(Timer::PROD_FV);
-  // }
+
+  for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
+    int t_ptr = type_i * ntypes + type_i_in;
+    int _stride = sel[type_i_in] * 4;
+    for(int ii = 0; ii < type_natoms[type_i]; ii++) {
+      for(int jj = 0; jj < _stride; jj++) {
+        r_matrix_grid_3d[0][t_ptr][ii*_stride+jj] = -1 * (r_matrix_grid_3d[0][t_ptr][ii*_stride+jj] * dextf[ii * 3 + 0] + 
+                                              r_matrix_grid_3d[1][t_ptr][ii*_stride+jj] * dextf[ii * 3 + 1] + 
+                                              r_matrix_grid_3d[2][t_ptr][ii*_stride+jj] * dextf[ii * 3 + 2]);
+      }
+    }
+    if(DEBUG_MSG) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("dipole r_matrix_grid_3d matmul {} {}:", type_i, type_i_in), r_matrix_grid_3d[0][t_ptr]);
+
+    prod_force_a_cpu(r_matrix_grid_3d[0][t_ptr],
+              type_i, type_i_in);
+    if(update->ntimestep == output->next || update->ntimestep == 0) {
+      prod_virial_a_cpu(r_matrix_grid_3d[0][t_ptr],
+                type_i, type_i_in);
+    }
+  }
 }
 
 void DeepPot::fitting_net_normal(int type_i) {
@@ -3717,7 +3767,6 @@ void DeepPot::prod_force_a_cpu(
   if((getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1)){
     std::stringstream ss;
 
-    
     ss << "prod_force_a_cpu  "<< std::endl;
     ss << "net_deriv  "<< std::endl;
     for(int _i = 0; _i < 4 * sel[type_i_in]; _i++) {
@@ -3731,7 +3780,7 @@ void DeepPot::prod_force_a_cpu(
     }
     std::cout << ss.str() << std::endl;
     fflush(stdout);
-  
+
   }
 
   

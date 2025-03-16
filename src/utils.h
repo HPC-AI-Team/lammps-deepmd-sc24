@@ -90,7 +90,8 @@ namespace utils {
    std::string tmp;
    tmp += "[info]" + mesg;
    for(int i = 0; i < n ;i += step) {
-      tmp += fmt::format("  {}:{}", i, n_array[i]);
+      if(std::is_same<int, TYPE>::value) tmp += fmt::format("  {}:{}", i, n_array[i]);
+      else tmp += fmt::format("  {}:{:<3.9f}", i, n_array[i]);
       if(i != 0 && (i % 100 == 0)) tmp += "\n      ";
    }
    tmp += "\n";

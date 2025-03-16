@@ -262,6 +262,8 @@ public:
 
   void swith_model(int _current_model);
 
+  void shuffer_dextf(int *bd_idx, FPTYPE *delef_);
+
   void load_data_from_dat(std::string graph_path);
 
   void store_pb_data();
@@ -489,6 +491,7 @@ private:
   FPTYPE* dcoord;
   double* dforce;
   double* dvirial;
+  FPTYPE* dextf;
   
   int*    ori_datype;
   FPTYPE* ori_dcoord;

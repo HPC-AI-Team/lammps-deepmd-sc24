@@ -226,36 +226,36 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
           if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nlist {} \n",  max_nloc,  max_nall, max_nlist);
 
-          for(int _tid = 0; _tid < num_threads; _tid++){
-            deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
-          }
+          // for(int _tid = 0; _tid < num_threads; _tid++){
+          //   deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
+          // }
 
-          memory->create(dcoord,   atom->nmax * 3,"pair_deepmd:dcoord");
+          // memory->create(dcoord,   atom->nmax * 3,"pair_deepmd:dcoord");
           memory->create(dvirial,   9,"pair_deepmd:dvirial");
           memory->create(thread_dvirial,        nthreads, 9,"pair_deepmd:thread_dvirial");
-          memory->create(thread_dforce,         nthreads, max_nall * 3, "pair_deepmd::thread_dforce");
-          memory->create(thread_dcoord,         nthreads, max_nall * 3, "pair_deepmd::thread_dcoord");
-          memory->create(thread_dtype,          nthreads, max_nall, "pair_deepmd::thread_dtype");
-          memory->create(forward_index_map,     nthreads, max_nall, "pair_deepmd::forward_index_map");
-          memory->create(backward_index_maps,   nthreads, max_nall, "pair_deepmd::backward_index_maps");
-          memory->create(backward_index_size,   nthreads, "pair_deepmd::backward_index_size");      
           memory->create(thread_dener,          nthreads, "pair_deepmd::thread_dener");
+          // memory->create(thread_dforce,         nthreads, max_nall * 3, "pair_deepmd::thread_dforce");
+          // memory->create(thread_dcoord,         nthreads, max_nall * 3, "pair_deepmd::thread_dcoord");
+          // memory->create(thread_dtype,          nthreads, max_nall, "pair_deepmd::thread_dtype");
+          // memory->create(forward_index_map,     nthreads, max_nall, "pair_deepmd::forward_index_map");
+          // memory->create(backward_index_maps,   nthreads, max_nall, "pair_deepmd::backward_index_maps");
+          // memory->create(backward_index_size,   nthreads, "pair_deepmd::backward_index_size");      
 
           // if(comm->me == 0) utils::logmesg(Pair::lmp, "[INFO] thread_atom_num {} \n", max_nloc);
-          memory->create(thread_neigh,          nthreads, max_nlist * max_nloc,"pair_deepmd:thread_neigh");
-          memory->create(thread_local_ilist,    nthreads, max_nloc, "pair_deepmd::thread_local_ilist");
-          memory->create(thread_local_numneigh, nthreads, max_nloc, "pair_deepmd::thread_local_numneigh");
+          // memory->create(thread_neigh,          nthreads, max_nlist * max_nloc,"pair_deepmd:thread_neigh");
+          // memory->create(thread_local_ilist,    nthreads, max_nloc, "pair_deepmd::thread_local_ilist");
+          // memory->create(thread_local_numneigh, nthreads, max_nloc, "pair_deepmd::thread_local_numneigh");
 
-          memset(thread_neigh[0], 0,          nthreads * max_nlist * max_nloc * sizeof(int));
-          memset(thread_local_ilist[0], 0,    nthreads * max_nloc * sizeof(int));
-          memset(thread_local_numneigh[0], 0, nthreads * max_nloc * sizeof(int));
+          // memset(thread_neigh[0], 0,          nthreads * max_nlist * max_nloc * sizeof(int));
+          // memset(thread_local_ilist[0], 0,    nthreads * max_nloc * sizeof(int));
+          // memset(thread_local_numneigh[0], 0, nthreads * max_nloc * sizeof(int));
 
-          thread_firstneigh  = new int**[nthreads];
+          // thread_firstneigh  = new int**[nthreads];
 
-          for(int _tid = 0; _tid < num_threads; _tid++) {
-            thread_firstneigh[_tid]  = new int*[max_nloc];
-            thread_firstneigh[_tid][0] =  thread_neigh[_tid];
-          }
+          // for(int _tid = 0; _tid < num_threads; _tid++) {
+          //   thread_firstneigh[_tid]  = new int*[max_nloc];
+          //   thread_firstneigh[_tid][0] =  thread_neigh[_tid];
+          // }
 
           // if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD finish reserve buffer \n");
 
@@ -438,9 +438,9 @@ void PairDeepMD::compute(int eflag, int vflag) {
         }
         #else
 
-        deep_pots[tid]->splite_atom(0);
+        // deep_pots[tid]->splite_atom(0);
         #pragma omp barrier
-        deep_pots[tid]->compute (thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
+        deep_pots[tid]->compute (&thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
 
         #endif
 
@@ -811,7 +811,7 @@ void PairDeepMD::create_dcoord(int nall, int tid) {
 
 
 
-void PairDeepMD::force_reduce(double *dall, int nall, int nthreads, int ndim, int tid, int scale) {
+void PairDeepMD::force_reduce(double *dall, int nall, int nthreads, int ndim, int tid, double scale) {
 
     // NOOP in single-threaded execution.
     if (nthreads == 1) return;

@@ -58,7 +58,7 @@ class PairDeepMD : public Pair, public ThrOMP {
   void print_summary(const std::string pre) const;
   int get_node_rank();
   void create_dcoord(int nall, int tid);
-  void force_reduce(double *, int, int, int, int, int);
+  void force_reduce(double *, int, int, int, int, double);
 
   // std::string get_file_content(const std::string & model);
   // std::vector<std::string> get_file_content(const std::vector<std::string> & models);
@@ -70,6 +70,8 @@ protected:
 public:
   DeepPot *deep_pot;
   DeepPot **deep_pots;
+
+  int numb_types;
   
 private:  
   int first_time[T_THREAD] = {0};
@@ -89,7 +91,6 @@ private:
   std::string graph_path;
 
   double cutoff;
-  int numb_types;
   std::vector<std::vector<double > > all_force;
   int out_freq;
   std::string out_file;
@@ -111,6 +112,7 @@ private:
   double** thread_dforce;
   int **thread_dtype;
   double* dcoord;
+  // double *parallel_dforce;
 
   FPTYPE eps;
   FPTYPE eps_v;
