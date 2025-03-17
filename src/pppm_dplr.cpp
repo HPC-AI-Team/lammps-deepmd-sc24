@@ -8,9 +8,27 @@
 #include "math_const.h"
 #include "pppm.h"
 #include "grid3d.h"
+#include "comm.h"
+#include "angle.h"
+#include "bond.h"
+#include "error.h"
+#include "fft3d_wrap.h"
+#include "grid3d.h"
+#include "math_extra.h"
+#include "math_special.h"
+#include "neighbor.h"
+#include "pair.h"
+#include "remap_wrap.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
+using namespace MathSpecial;
+
+#define MAXORDER 7
+#define OFFSET 16384
+#define LARGE 10000.0
+#define SMALL 0.00001
+#define EPS_HOC 1.0e-7
 
 enum{REVERSE_RHO};
 enum{FORWARD_IK,FORWARD_AD,FORWARD_IK_PERATOM,FORWARD_AD_PERATOM};
@@ -46,7 +64,18 @@ void PPPMDPLR::init()
 
   PPPM::init();
 
-  int nlocal = atom->nlocal;
+  box_pos = new heffte::box3d<>({{nxlo_in, nylo_in, nzlo_in},
+              { nxhi_in, nyhi_in, nzhi_in}});
+
+  heffte_wrapper = new heffte::fft3d<heffte::backend::fftw>(*box_pos,
+                        *box_pos,MPI_COMM_WORLD);
+  heffte_indata = new std::complex<FFT_SCALAR>[heffte_wrapper->size_inbox()];
+  heffte_outdata = new std::complex<FFT_SCALAR>[heffte_wrapper->size_outbox()];
+
+  utils::logmesg(lmp, "[INFO] PPPMDPLR data size {} {} \n", 
+            heffte_wrapper->size_inbox(),heffte_wrapper->size_outbox());
+
+  
   // cout << " ninit pppm/dplr ---------------------- " << nlocal << endl;
   // fele.resize(nlocal*3);
   // fill(fele.begin(), fele.end(), 0.0);
@@ -213,6 +242,767 @@ void PPPMDPLR::compute(int eflag, int vflag)
   if (triclinic) domain->lamda2x(atom->nlocal);
 }
 
+
+
+#ifdef SELF_HEFFTE
+/* ----------------------------------------------------------------------
+   FFT-based Poisson solver for ik
+------------------------------------------------------------------------- */
+
+void PPPMDPLR::poisson_ik()
+{
+  if(comm->fft_type_flag == 0) poisson_ik_normal();
+  else if(comm->fft_type_flag == 1) poisson_ik_heffte();
+  // int i,j,k,n;
+  // double eng;
+  // int _nfft;
+  // int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  // if(comm->fft_type_flag == 0) {
+  //   xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
+  //   _nfft = nfft;
+  // } else {
+  //   xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
+  //   _nfft = nfft_brick;
+  // }
+
+  // // transform charge density (r -> k)
+
+  // n = 0;
+
+  // if(comm->fft_type_flag == 0) {
+  //   for (i = 0; i < _nfft; i++) {
+  //     work1[n++] = density_fft[i];
+  //     work1[n++] = ZEROF;
+  //   }
+  //   fft1->compute(work1,work1,FFT3d::FORWARD);
+
+  // } if(comm->fft_type_flag == 1) {
+  //   for (int i = 0; i < _nfft; i++) {
+  //     heffte_indata[i].real(density_fft[i]);
+  //     heffte_indata[i].imag(ZEROF);
+  //   }
+
+  //   run_forward();
+  //   n = 0;
+  //   for (int i = 0; i < _nfft; i++) {
+  //     work1[n++] = heffte_outdata[i].real();
+  //     work1[n++] = heffte_outdata[i].imag();
+  //   }
+  // }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, _nfft*2, 1 );
+  
+
+  // // global energy and virial contribution
+
+  // double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
+  // double s2 = scaleinv*scaleinv;
+
+  // if (eflag_global || vflag_global) {
+  //   if (vflag_global) {
+  //     n = 0;
+  //     for (i = 0; i < _nfft; i++) {
+  //       eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+  //       for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
+  //       if (eflag_global) energy += eng;
+  //       n += 2;
+  //     }
+  //   } else {
+  //     n = 0;
+  //     for (i = 0; i < _nfft; i++) {
+  //       energy +=
+  //         s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+  //       n += 2;
+  //     }
+  //   }
+  // }
+
+  // // scale by 1/total-grid-pts to get rho(k)
+  // // multiply by Green's function to get V(k)
+
+  // n = 0;
+  // for (i = 0; i < _nfft; i++) {
+  //   work1[n++] *= scaleinv * greensfn[i];
+  //   work1[n++] *= scaleinv * greensfn[i];
+  // }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, _nfft*2, 1 );
+
+
+  // // extra FFTs for per-atom energy/virial
+
+  // if (evflag_atom) poisson_peratom();
+
+  // // triclinic system
+
+  // if (triclinic) {
+  //   poisson_ik_triclinic();
+  //   return;
+  // }
+
+  // // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
+  // // FFT leaves data in 3d brick decomposition
+  // // copy it into inner portion of vdx,vdy,vdz arrays
+
+  // // x direction gradient
+
+  
+  // if(comm->fft_type_flag == 0) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         work2[n] = -fkx[i]*work1[n+1];
+  //         work2[n+1] = fkx[i]*work1[n];
+  //         n += 2;
+  //       }
+  
+  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
+
+  // } if(comm->fft_type_flag == 1) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         heffte_indata[n].real(-fkx[i]*work1[2*n+1]);
+  //         heffte_indata[n].imag(fkx[i] *work1[2*n]);
+  //         n += 1;
+  //       }
+
+  //   run_backward();
+  //   n = 0;
+  //   for (int i = 0; i < _nfft; i++) {
+  //     work2[n++] = heffte_outdata[i].real();
+  //     work2[n++] = heffte_outdata[i].imag();
+  //   }
+  // }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, _nfft*2, 1 );
+
+  // n = 0;
+  // for (k = nzlo_in; k <= nzhi_in; k++)
+  //   for (j = nylo_in; j <= nyhi_in; j++)
+  //     for (i = nxlo_in; i <= nxhi_in; i++) {
+  //       vdx_brick[k][j][i] = work2[n];
+  //       n += 2;
+  //     }
+
+  // // y direction gradient
+
+  // if(comm->fft_type_flag == 0) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         work2[n] = -fky[j]*work1[n+1];
+  //         work2[n+1] = fky[j]*work1[n];
+  //         n += 2;
+  //       }
+  
+  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
+
+  // } if(comm->fft_type_flag == 1) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         heffte_indata[n].real(-fky[j]*work1[2*n+1]);
+  //         heffte_indata[n].imag(fky[j] *work1[2*n]);
+  //         n += 1;
+  //       }
+
+  //   run_backward();
+  //   n = 0;
+  //   for (int i = 0; i < _nfft; i++) {
+  //     work2[n++] = heffte_outdata[i].real();
+  //     work2[n++] = heffte_outdata[i].imag();
+  //   }
+  // }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, _nfft*2, 1 );
+
+  
+
+  // n = 0;
+  // for (k = nzlo_in; k <= nzhi_in; k++)
+  //   for (j = nylo_in; j <= nyhi_in; j++)
+  //     for (i = nxlo_in; i <= nxhi_in; i++) {
+  //       vdy_brick[k][j][i] = work2[n];
+  //       n += 2;
+  //     }
+
+  // // z direction gradient
+
+  // if(comm->fft_type_flag == 0) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         work2[n] = -fkz[k]*work1[n+1];
+  //         work2[n+1] = fkz[k]*work1[n];
+  //         n += 2;
+  //       }
+  
+  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
+
+  // } if(comm->fft_type_flag == 1) {
+  //   n = 0;
+  //   for (k = zlo; k <= zhi; k++)
+  //     for (j = ylo; j <= yhi; j++)
+  //       for (i = xlo; i <= xhi; i++) {
+  //         heffte_indata[n].real(-fkz[k]*work1[2*n+1]);
+  //         heffte_indata[n].imag(fkz[k] *work1[2*n]);
+  //         n += 1;
+  //       }
+
+  //   run_backward();
+  //   n = 0;
+  //   for (int i = 0; i < _nfft; i++) {
+  //     work2[n++] = heffte_outdata[i].real();
+  //     work2[n++] = heffte_outdata[i].imag();
+  //   }
+  // }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, _nfft*2, 1 );
+
+  // n = 0;
+  // for (k = nzlo_in; k <= nzhi_in; k++)
+  //   for (j = nylo_in; j <= nyhi_in; j++)
+  //     for (i = nxlo_in; i <= nxhi_in; i++) {
+  //       vdz_brick[k][j][i] = work2[n];
+  //       n += 2;
+  //     }
+}
+
+void PPPMDPLR::poisson_ik_utofubg() {
+
+}
+
+void PPPMDPLR::poisson_ik_heffte()
+{
+  int i,j,k,n;
+  double eng;
+  int _nfft;
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
+  _nfft = nfft_brick;
+
+  // transform charge density (r -> k)
+
+  n = 0;
+
+  for (int i = 0; i < _nfft; i++) {
+    heffte_indata[i].real(density_fft[i]);
+    heffte_indata[i].imag(ZEROF);
+  }
+
+  run_forward();
+  n = 0;
+  for (int i = 0; i < _nfft; i++) {
+    work1[n++] = heffte_outdata[i].real();
+    work1[n++] = heffte_outdata[i].imag();
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, _nfft*2, 1 );
+  
+
+  // global energy and virial contribution
+
+  double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
+  double s2 = scaleinv*scaleinv;
+
+  if (eflag_global || vflag_global) {
+    if (vflag_global) {
+      n = 0;
+      for (i = 0; i < _nfft; i++) {
+        eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+        for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
+        if (eflag_global) energy += eng;
+        n += 2;
+      }
+    } else {
+      n = 0;
+      for (i = 0; i < _nfft; i++) {
+        energy +=
+          s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+        n += 2;
+      }
+    }
+  }
+
+  // scale by 1/total-grid-pts to get rho(k)
+  // multiply by Green's function to get V(k)
+
+  n = 0;
+  for (i = 0; i < _nfft; i++) {
+    work1[n++] *= scaleinv * greensfn[i];
+    work1[n++] *= scaleinv * greensfn[i];
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, _nfft*2, 1 );
+
+
+  // extra FFTs for per-atom energy/virial
+
+  if (evflag_atom) poisson_peratom();
+
+  // triclinic system
+
+  if (triclinic) {
+    poisson_ik_triclinic();
+    return;
+  }
+
+  // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
+  // FFT leaves data in 3d brick decomposition
+  // copy it into inner portion of vdx,vdy,vdz arrays
+
+  // x direction gradient
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        heffte_indata[n].real(-fkx[i]*work1[2*n+1]);
+        heffte_indata[n].imag(fkx[i] *work1[2*n]);
+        n += 1;
+      }
+
+  run_backward();
+  n = 0;
+  for (int i = 0; i < _nfft; i++) {
+    work2[n++] = heffte_outdata[i].real();
+    work2[n++] = heffte_outdata[i].imag();
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, _nfft*2, 1 );
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdx_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+
+  // y direction gradient
+
+  
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        heffte_indata[n].real(-fky[j]*work1[2*n+1]);
+        heffte_indata[n].imag(fky[j] *work1[2*n]);
+        n += 1;
+      }
+
+  run_backward();
+  n = 0;
+  for (int i = 0; i < _nfft; i++) {
+    work2[n++] = heffte_outdata[i].real();
+    work2[n++] = heffte_outdata[i].imag();
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, _nfft*2, 1 );
+
+  
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdy_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+
+  // z direction gradient
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        heffte_indata[n].real(-fkz[k]*work1[2*n+1]);
+        heffte_indata[n].imag(fkz[k] *work1[2*n]);
+        n += 1;
+      }
+
+  run_backward();
+  n = 0;
+  for (int i = 0; i < _nfft; i++) {
+    work2[n++] = heffte_outdata[i].real();
+    work2[n++] = heffte_outdata[i].imag();
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, _nfft*2, 1 );
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdz_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+}
+
+void PPPMDPLR::poisson_ik_normal()
+{
+  int i,j,k,n;
+  double eng;
+
+  // transform charge density (r -> k)
+
+  n = 0;
+  for (i = 0; i < nfft; i++) {
+    work1[n++] = density_fft[i];
+    work1[n++] = ZEROF;
+  }
+
+  fft1->compute(work1,work1,FFT3d::FORWARD);
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM work1 \n"),work1, nfft*2, 1 );
+
+
+  // global energy and virial contribution
+
+  double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
+  double s2 = scaleinv*scaleinv;
+
+  if (eflag_global || vflag_global) {
+    if (vflag_global) {
+      n = 0;
+      for (i = 0; i < nfft; i++) {
+        eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+        for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
+        if (eflag_global) energy += eng;
+        n += 2;
+      }
+    } else {
+      n = 0;
+      for (i = 0; i < nfft; i++) {
+        energy +=
+          s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+        n += 2;
+      }
+    }
+  }
+
+  // scale by 1/total-grid-pts to get rho(k)
+  // multiply by Green's function to get V(k)
+
+  n = 0;
+  for (i = 0; i < nfft; i++) {
+    work1[n++] *= scaleinv * greensfn[i];
+    work1[n++] *= scaleinv * greensfn[i];
+  }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM work1 greensn \n"),work1, nfft*2, 1 );
+
+
+  // extra FFTs for per-atom energy/virial
+
+  if (evflag_atom) poisson_peratom();
+
+  // triclinic system
+
+  if (triclinic) {
+    poisson_ik_triclinic();
+    return;
+  }
+
+  // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
+  // FFT leaves data in 3d brick decomposition
+  // copy it into inner portion of vdx,vdy,vdz arrays
+
+  // x direction gradient
+
+  n = 0;
+  for (k = nzlo_fft; k <= nzhi_fft; k++)
+    for (j = nylo_fft; j <= nyhi_fft; j++)
+      for (i = nxlo_fft; i <= nxhi_fft; i++) {
+        work2[n] = -fkx[i]*work1[n+1];
+        work2[n+1] = fkx[i]*work1[n];
+        n += 2;
+      }
+
+  fft2->compute(work2,work2,FFT3d::BACKWARD);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 0 back \n"),work2, nfft_brick*2, 1 );
+
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdx_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+
+  // y direction gradient
+
+  n = 0;
+  for (k = nzlo_fft; k <= nzhi_fft; k++)
+    for (j = nylo_fft; j <= nyhi_fft; j++)
+      for (i = nxlo_fft; i <= nxhi_fft; i++) {
+        work2[n] = -fky[j]*work1[n+1];
+        work2[n+1] = fky[j]*work1[n];
+        n += 2;
+      }
+
+  fft2->compute(work2,work2,FFT3d::BACKWARD);
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 1 back \n"),work2, nfft_brick*2, 1 );
+
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdy_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+
+  // z direction gradient
+
+  n = 0;
+  for (k = nzlo_fft; k <= nzhi_fft; k++)
+    for (j = nylo_fft; j <= nyhi_fft; j++)
+      for (i = nxlo_fft; i <= nxhi_fft; i++) {
+        work2[n] = -fkz[k]*work1[n+1];
+        work2[n+1] = fkz[k]*work1[n];
+        n += 2;
+      }
+
+  fft2->compute(work2,work2,FFT3d::BACKWARD);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 2 back \n"),work2, nfft_brick*2, 1 );
+
+
+  n = 0;
+  for (k = nzlo_in; k <= nzhi_in; k++)
+    for (j = nylo_in; j <= nyhi_in; j++)
+      for (i = nxlo_in; i <= nxhi_in; i++) {
+        vdz_brick[k][j][i] = work2[n];
+        n += 2;
+      }
+}
+
+/* ----------------------------------------------------------------------
+   remap density from 3d brick decomposition to FFT decomposition
+------------------------------------------------------------------------- */
+
+void PPPMDPLR::brick2fft()
+{
+  int n,ix,iy,iz;
+
+  // copy grabs inner portion of density from 3d brick
+  // remap could be done as pre-stage of FFT,
+  //   but this works optimally on only double values, not complex values
+
+  n = 0;
+  for (iz = nzlo_in; iz <= nzhi_in; iz++)
+    for (iy = nylo_in; iy <= nyhi_in; iy++)
+      for (ix = nxlo_in; ix <= nxhi_in; ix++)
+        density_fft[n++] = density_brick[iz][iy][ix];
+
+  if(comm->fft_type_flag == 0) {
+    remap->perform(density_fft,density_fft,work1);
+  } 
+}
+
+void PPPMDPLR::compute_gf_ik()
+{
+  const double * const prd = domain->prd;
+
+  const double xprd = prd[0];
+  const double yprd = prd[1];
+  const double zprd = prd[2];
+  const double zprd_slab = zprd*slab_volfactor;
+  const double unitkx = (MY_2PI/xprd);
+  const double unitky = (MY_2PI/yprd);
+  const double unitkz = (MY_2PI/zprd_slab);
+
+  double snx,sny,snz;
+  double argx,argy,argz,wx,wy,wz,sx,sy,sz,qx,qy,qz;
+  double sum1,dot1,dot2;
+  double numerator,denominator;
+  double sqk;
+
+  int k,l,m,n,nx,ny,nz,kper,lper,mper;
+
+  const int nbx = static_cast<int> ((g_ewald*xprd/(MY_PI*nx_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int nby = static_cast<int> ((g_ewald*yprd/(MY_PI*ny_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int nbz = static_cast<int> ((g_ewald*zprd_slab/(MY_PI*nz_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int twoorder = 2*order;
+
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  if(comm->fft_type_flag == 0) {
+    xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
+  } else {
+    xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
+  }
+
+  n = 0;
+  for (m = zlo; m <= zhi; m++) {
+    mper = m - nz_pppm*(2*m/nz_pppm);
+    snz = square(sin(0.5*unitkz*mper*zprd_slab/nz_pppm));
+
+    for (l = ylo; l <= yhi; l++) {
+      lper = l - ny_pppm*(2*l/ny_pppm);
+      sny = square(sin(0.5*unitky*lper*yprd/ny_pppm));
+
+      for (k = xlo; k <= xhi; k++) {
+        kper = k - nx_pppm*(2*k/nx_pppm);
+        snx = square(sin(0.5*unitkx*kper*xprd/nx_pppm));
+
+        sqk = square(unitkx*kper) + square(unitky*lper) + square(unitkz*mper);
+
+        if (sqk != 0.0) {
+          numerator = 12.5663706/sqk;
+          denominator = gf_denom(snx,sny,snz);
+          sum1 = 0.0;
+
+          for (nx = -nbx; nx <= nbx; nx++) {
+            qx = unitkx*(kper+nx_pppm*nx);
+            sx = exp(-0.25*square(qx/g_ewald));
+            argx = 0.5*qx*xprd/nx_pppm;
+            wx = powsinxx(argx,twoorder);
+
+            for (ny = -nby; ny <= nby; ny++) {
+              qy = unitky*(lper+ny_pppm*ny);
+              sy = exp(-0.25*square(qy/g_ewald));
+              argy = 0.5*qy*yprd/ny_pppm;
+              wy = powsinxx(argy,twoorder);
+
+              for (nz = -nbz; nz <= nbz; nz++) {
+                qz = unitkz*(mper+nz_pppm*nz);
+                sz = exp(-0.25*square(qz/g_ewald));
+                argz = 0.5*qz*zprd_slab/nz_pppm;
+                wz = powsinxx(argz,twoorder);
+
+                dot1 = unitkx*kper*qx + unitky*lper*qy + unitkz*mper*qz;
+                dot2 = qx*qx+qy*qy+qz*qz;
+                sum1 += (dot1/dot2) * sx*sy*sz * wx*wy*wz;
+              }
+            }
+          }
+          greensfn[n++] = numerator*sum1/denominator;
+        } else greensfn[n++] = 0.0;
+      }
+    }
+  }
+}
+
+
+void PPPMDPLR::setup()
+{
+  if (triclinic) {
+    setup_triclinic();
+    return;
+  }
+
+  // perform some checks to avoid illegal boundaries with read_data
+
+  if (slabflag == 0 && domain->nonperiodic > 0)
+    error->all(FLERR,"Cannot use non-periodic boundaries with PPPM");
+  if (slabflag) {
+    if (domain->xperiodic != 1 || domain->yperiodic != 1 ||
+        domain->boundary[2][0] != 1 || domain->boundary[2][1] != 1)
+      error->all(FLERR,"Incorrect boundaries with slab PPPM");
+  }
+
+  int i,j,k,n;
+  double *prd;
+
+  // volume-dependent factors
+  // adjust z dimension for 2d slab PPPM
+  // z dimension for 3d PPPM is zprd since slab_volfactor = 1.0
+
+  if (triclinic == 0) prd = domain->prd;
+  else prd = domain->prd_lamda;
+
+  double xprd = prd[0];
+  double yprd = prd[1];
+  double zprd = prd[2];
+  double zprd_slab = zprd*slab_volfactor;
+  volume = xprd * yprd * zprd_slab;
+
+  delxinv = nx_pppm/xprd;
+  delyinv = ny_pppm/yprd;
+  delzinv = nz_pppm/zprd_slab;
+
+  delvolinv = delxinv*delyinv*delzinv;
+
+  double unitkx = (MY_2PI/xprd);
+  double unitky = (MY_2PI/yprd);
+  double unitkz = (MY_2PI/zprd_slab);
+
+  // fkx,fky,fkz for my FFT grid pts
+
+  double per;
+
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  if(comm->fft_type_flag == 0) {
+    xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
+  } else {
+    xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
+  }
+
+  for (i = xlo; i <= xhi; i++) {
+    per = i - nx_pppm*(2*i/nx_pppm);
+    fkx[i] = unitkx*per;
+  }
+
+  for (i = ylo; i <= yhi; i++) {
+    per = i - ny_pppm*(2*i/ny_pppm);
+    fky[i] = unitky*per;
+  }
+
+  for (i = zlo; i <= zhi; i++) {
+    per = i - nz_pppm*(2*i/nz_pppm);
+    fkz[i] = unitkz*per;
+  }
+
+  // virial coefficients
+
+  double sqk,vterm;
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++) {
+    for (j = ylo; j <= yhi; j++) {
+      for (i = xlo; i <= xhi; i++) {
+        sqk = fkx[i]*fkx[i] + fky[j]*fky[j] + fkz[k]*fkz[k];
+        if (sqk == 0.0) {
+          vg[n][0] = 0.0;
+          vg[n][1] = 0.0;
+          vg[n][2] = 0.0;
+          vg[n][3] = 0.0;
+          vg[n][4] = 0.0;
+          vg[n][5] = 0.0;
+        } else {
+          vterm = -2.0 * (1.0/sqk + 0.25/(g_ewald*g_ewald));
+          vg[n][0] = 1.0 + vterm*fkx[i]*fkx[i];
+          vg[n][1] = 1.0 + vterm*fky[j]*fky[j];
+          vg[n][2] = 1.0 + vterm*fkz[k]*fkz[k];
+          vg[n][3] = vterm*fkx[i]*fky[j];
+          vg[n][4] = vterm*fkx[i]*fkz[k];
+          vg[n][5] = vterm*fky[j]*fkz[k];
+        }
+        n++;
+      }
+    }
+  }
+
+  if (differentiation_flag == 1) compute_gf_ad();
+  else compute_gf_ik();
+}
+
+#endif
 /* ----------------------------------------------------------------------
    interpolate from grid to get electric field & force on my particles for ik
 ------------------------------------------------------------------------- */
