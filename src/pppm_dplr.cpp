@@ -51,6 +51,10 @@ PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   PPPM(lmp)
 {
   triclinic_support = 1;
+  x_node = nullptr;
+  part2grid_node = nullptr;
+  vg_brick = nullptr;
+  fkx_brick = nullptr; fky_brick = nullptr; fkz_brick = nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -63,24 +67,231 @@ void PPPMDPLR::init()
     error->all(FLERR,"Kspace style pppm/dplr requires newton on");
 
   PPPM::init();
+  init_heffte_fft();
+  init_node_fft();
+}
+
+void PPPMDPLR::init_heffte_fft() {
 
   box_pos = new heffte::box3d<>({{nxlo_in, nylo_in, nzlo_in},
-              { nxhi_in, nyhi_in, nzhi_in}});
+    { nxhi_in, nyhi_in, nzhi_in}});
 
   heffte_wrapper = new heffte::fft3d<heffte::backend::fftw>(*box_pos,
-                        *box_pos,MPI_COMM_WORLD);
+                *box_pos,MPI_COMM_WORLD);
   heffte_indata = new std::complex<FFT_SCALAR>[heffte_wrapper->size_inbox()];
   heffte_outdata = new std::complex<FFT_SCALAR>[heffte_wrapper->size_outbox()];
 
   utils::logmesg(lmp, "[INFO] PPPMDPLR data size {} {} \n", 
-            heffte_wrapper->size_inbox(),heffte_wrapper->size_outbox());
-
-  
-  // cout << " ninit pppm/dplr ---------------------- " << nlocal << endl;
-  // fele.resize(nlocal*3);
-  // fill(fele.begin(), fele.end(), 0.0);
+    heffte_wrapper->size_inbox(),heffte_wrapper->size_outbox());
 }
 
+void PPPMDPLR::init_node_fft() {
+
+  MPI_Allreduce(&nxlo_out, &nxlo_node_out, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nxhi_out, &nxhi_node_out, 1, MPI_INT, MPI_MAX, comm->node_comm);
+  MPI_Allreduce(&nylo_out, &nylo_node_out, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nyhi_out, &nyhi_node_out, 1, MPI_INT, MPI_MAX, comm->node_comm);
+  MPI_Allreduce(&nzlo_out, &nzlo_node_out, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nzhi_out, &nzhi_node_out, 1, MPI_INT, MPI_MAX, comm->node_comm);
+
+  MPI_Allreduce(&nxlo_in, &nxlo_node_in, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nxhi_in, &nxhi_node_in, 1, MPI_INT, MPI_MAX, comm->node_comm);
+  MPI_Allreduce(&nylo_in, &nylo_node_in, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nyhi_in, &nyhi_node_in, 1, MPI_INT, MPI_MAX, comm->node_comm);
+  MPI_Allreduce(&nzlo_in, &nzlo_node_in, 1, MPI_INT, MPI_MIN, comm->node_comm);
+  MPI_Allreduce(&nzhi_in, &nzhi_node_in, 1, MPI_INT, MPI_MAX, comm->node_comm);
+
+  utils::logmesg(lmp, "[INFO] PPPM nxlo_node_out  {}-{} {}-{} {}-{} \n", nxlo_node_out,nxhi_node_out,nylo_node_out,nyhi_node_out,nzlo_node_out,nzhi_node_out);
+  utils::logmesg(lmp, "[INFO] PPPM nxlo_node_out  {}-{} {}-{} {}-{} \n", nxlo_node_in,nxhi_node_in,nylo_node_in,nyhi_node_in,nzlo_node_in,nzhi_node_in);
+
+  ngrid_node = (nxhi_node_out-nxlo_node_out+1) * (nyhi_node_out-nylo_node_out+1) *
+    (nzhi_node_out-nzlo_node_out+1);
+
+  nfft_node_brick = (nxhi_node_in-nxlo_node_in+1) * (nyhi_node_in-nylo_node_in+1) *
+    (nzhi_node_in-nzlo_node_in+1);
+  
+  memory->create3d_offset(density_brick_node,nzlo_node_out,nzhi_node_out,nylo_node_out,nyhi_node_out,
+      nxlo_node_out,nxhi_node_out,"pppm:density_brick_node");
+
+  utils::logmesg(lmp, "[INFO] ngrid_node {} nfft_node_brick {}\n", ngrid_node, nfft_node_brick);
+
+  memory->create(density_fft_node,ngrid_node,"pppm:density_fft_node");
+
+  int *nodeloc = comm->nodeloc;
+  int *nodegrid = comm->nodegrid;
+  maxswap = 26;
+  swap = new Swap[maxswap];
+
+  int neiproc[26][2];
+  int neipbc[26][3];
+  int neidirec[26][3];
+
+  int iswap = 0;
+  nswap = 26; 
+  if(comm->numa_id == NUMA_NUM - 1) {
+    int **neigh_fft_prd_out, **neigh_fft_prd_in;
+    memory->create(neigh_fft_prd_out,comm->nnode,6,"comm:neigh_fft_prd_out");
+    memory->create(neigh_fft_prd_in,comm->nnode,6,"comm:neigh_fft_prd_in");
+
+    int lcl_fft_prd_in[6]  = {nxlo_node_in, nxhi_node_in, nylo_node_in, nyhi_node_in, nzlo_node_in, nzhi_node_in};
+    int lcl_fft_prd_out[6] = {nxlo_node_out, nxhi_node_out, nylo_node_out, nyhi_node_out, nzlo_node_out, nzhi_node_out};
+    MPI_Allgather(lcl_fft_prd_out,6,MPI_INT,neigh_fft_prd_out[0],6,MPI_INT,comm->numa_comm);
+    MPI_Allgather(lcl_fft_prd_in, 6,MPI_INT,neigh_fft_prd_in[0], 6,MPI_INT,comm->numa_comm);
+
+    utils::logmesg(lmp, "[INFO] finish allgather fft_prd\n");
+
+    for(int dim = 0; dim < 13; dim++) {
+      for(int ineed = 0; ineed < 2; ineed ++) {
+        int neiloc[3];
+        for(int j = 0; j < 3; j++) {
+          if(ineed % 2 == 0)
+            neiloc[j] = (nodeloc[j] - con_direction[dim][j] + nodegrid[j]) % nodegrid[j];
+          else
+            neiloc[j] = (nodeloc[j] + con_direction[dim][j] + nodegrid[j]) % nodegrid[j];
+        };
+
+        int neinode = (neiloc[2] * nodegrid[1] + neiloc[1]) * nodegrid[0] + neiloc[0];
+
+        neiproc[dim][ineed] = neinode * NUMA_NUM + comm->numa_id;
+      }
+    }
+
+
+    for(int dim = 0; dim < 13; dim++) {
+      for(int ineed = 0; ineed < 2; ineed++) {
+        if(ineed %2 == 0){
+          swap[iswap].sendproc = neiproc[dim][0];
+          swap[iswap].recvproc = neiproc[dim][1];
+          neidirec[iswap][0] = con_direction[dim][0]; 
+          neidirec[iswap][1] = con_direction[dim][1];
+          neidirec[iswap][2] = con_direction[dim][2];
+        } else {
+          swap[iswap].sendproc = neiproc[dim][1];
+          swap[iswap].recvproc = neiproc[dim][0];
+          neidirec[iswap][0] = -1 * con_direction[dim][0]; 
+          neidirec[iswap][1] = -1 * con_direction[dim][1];
+          neidirec[iswap][2] = -1 * con_direction[dim][2];
+        }
+        iswap++;
+      }
+
+    }
+
+    for(int i = 0; i < 3; i++) {
+      for(int iswap = 0; iswap < 26; iswap++) {
+        if(nodeloc[i] - neidirec[iswap][i] < 0) 
+          neipbc[iswap][i]   = 1;
+        else if(nodeloc[i] - neidirec[iswap][i] >= nodegrid[i]) 
+          neipbc[iswap][i]   = -1;
+        else
+          neipbc[iswap][i]   = 0;
+      }
+    }
+
+    utils::logmesg(lmp, "[INFO] PPPM send pack list \n");
+    utils::logmesg(lmp, "[INFO] PPPM iswap prd   {}-{} {}-{} {}-{} \n", 
+              lcl_fft_prd_out[0], lcl_fft_prd_out[1], lcl_fft_prd_out[2], lcl_fft_prd_out[3], lcl_fft_prd_out[4], lcl_fft_prd_out[5]);
+    for(int iswap = 0; iswap < 26; iswap++) {
+      int sendnode = swap[iswap].sendproc / NUMA_NUM;
+      int nei_prd_in[6] = { neigh_fft_prd_in[sendnode][0] - neipbc[iswap][2] * nx_pppm, 
+                            neigh_fft_prd_in[sendnode][1] - neipbc[iswap][2] * nx_pppm, 
+                            neigh_fft_prd_in[sendnode][2] - neipbc[iswap][1] * ny_pppm, 
+                            neigh_fft_prd_in[sendnode][3] - neipbc[iswap][1] * ny_pppm, 
+                            neigh_fft_prd_in[sendnode][4] - neipbc[iswap][0] * nz_pppm, 
+                            neigh_fft_prd_in[sendnode][5] - neipbc[iswap][0] * nz_pppm
+                          };
+      double x_min_pack = std::max(lcl_fft_prd_out[0], nei_prd_in[0]);
+      double x_max_pack = std::min(lcl_fft_prd_out[1], nei_prd_in[1]);
+      double y_min_pack = std::max(lcl_fft_prd_out[2], nei_prd_in[2]);
+      double y_max_pack = std::min(lcl_fft_prd_out[3], nei_prd_in[3]);
+      double z_min_pack = std::max(lcl_fft_prd_out[4], nei_prd_in[4]);
+      double z_max_pack = std::min(lcl_fft_prd_out[5], nei_prd_in[5]);
+
+      if (x_min_pack > x_max_pack || y_min_pack > y_max_pack || z_min_pack > z_max_pack) {
+        swap[iswap].npack = 0;
+        utils::logmesg(lmp, "[INFO] PPPM iswap prd in    {} {}   {}-{} {}-{} {}-{} npack {}\n", 
+            iswap, swap[iswap].sendproc, nei_prd_in[0], nei_prd_in[1], nei_prd_in[2], nei_prd_in[3], nei_prd_in[4], nei_prd_in[5], swap[iswap].npack);
+        continue;
+      }
+
+      swap[iswap].packlist   = new int[ngrid_node];
+      swap[iswap].send_buf   = new FFT_SCALAR[ngrid_node];
+      
+      int n = 0;
+      int ix,iy,iz;
+      int nx = (nxhi_node_out-nxlo_node_out+1);
+      int ny = (nyhi_node_out-nylo_node_out+1);
+      for (iz = z_min_pack; iz <= z_max_pack; iz++)
+        for (iy = y_min_pack; iy <= y_max_pack; iy++)
+          for (ix = x_min_pack; ix <= x_max_pack; ix++)
+            swap[iswap].packlist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
+      
+      swap[iswap].npack    = n;
+      swap[iswap].send_buf = new FFT_SCALAR[n];
+
+      utils::logmesg(lmp, "[INFO] PPPM iswap prd in    {} {}   {}-{} {}-{} {}-{} npack {}\n", 
+              iswap, swap[iswap].sendproc, nei_prd_in[0], nei_prd_in[1], nei_prd_in[2], nei_prd_in[3], nei_prd_in[4], nei_prd_in[5], n);
+    }
+    //   utils::logmesg(lmp, "[INFO] PPPM iswap prd in     {}    {}-{} {}-{} {}-{} \n", 
+    //           nswap, nei_prd_in[0], nei_prd_in[1], nei_prd_in[2], nei_prd_in[3], nei_prd_in[4], nei_prd_in[5]);
+    //   utils::logmesg(lmp, "[INFO] PPPM iswap pack       {}    {}-{} {}-{} {}-{} \n", 
+    //           nswap, x_min_pack,x_max_pack,y_min_pack,y_max_pack,z_min_pack,z_max_pack);
+    
+    utils::logmesg(lmp, "[INFO] PPPM recv unpack list \n");
+    utils::logmesg(lmp, "[INFO] PPPM iswap prd   {}-{} {}-{} {}-{} \n", 
+        lcl_fft_prd_in[0], lcl_fft_prd_in[1], lcl_fft_prd_in[2], lcl_fft_prd_in[3], lcl_fft_prd_in[4], lcl_fft_prd_in[5]);
+    for(int iswap = 0; iswap < 26; iswap++) {
+      int rswap = (iswap % 2 == 0) ? iswap + 1 : iswap - 1;
+
+      int recvnode = swap[iswap].recvproc / NUMA_NUM;
+      int nei_prd_out[6] = {neigh_fft_prd_out[recvnode][0] - neipbc[rswap][2] * nx_pppm, 
+                            neigh_fft_prd_out[recvnode][1] - neipbc[rswap][2] * nx_pppm, 
+                            neigh_fft_prd_out[recvnode][2] - neipbc[rswap][1] * ny_pppm, 
+                            neigh_fft_prd_out[recvnode][3] - neipbc[rswap][1] * ny_pppm, 
+                            neigh_fft_prd_out[recvnode][4] - neipbc[rswap][0] * nz_pppm, 
+                            neigh_fft_prd_out[recvnode][5] - neipbc[rswap][0] * nz_pppm
+                          };
+      double x_min_unpack = std::max(lcl_fft_prd_in[0], nei_prd_out[0]);
+      double x_max_unpack = std::min(lcl_fft_prd_in[1], nei_prd_out[1]);
+      double y_min_unpack = std::max(lcl_fft_prd_in[2], nei_prd_out[2]);
+      double y_max_unpack = std::min(lcl_fft_prd_in[3], nei_prd_out[3]);
+      double z_min_unpack = std::max(lcl_fft_prd_in[4], nei_prd_out[4]);
+      double z_max_unpack = std::min(lcl_fft_prd_in[5], nei_prd_out[5]);
+
+      if (x_min_unpack > x_max_unpack || y_min_unpack > y_max_unpack || z_min_unpack > z_max_unpack) {
+        swap[iswap].nunpack = 0;
+        utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
+          iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], swap[iswap].nunpack);
+        continue;
+      }
+
+      swap[iswap].unpacklist   = new int[ngrid_node];
+      
+      int n = 0;
+      int ix,iy,iz;
+      int nx = (nxhi_node_out-nxlo_node_out+1);
+      int ny = (nyhi_node_out-nylo_node_out+1);
+      for (iz = z_min_unpack; iz <= z_max_unpack; iz++)
+        for (iy = y_min_unpack; iy <= y_max_unpack; iy++)
+          for (ix = x_min_unpack; ix <= x_max_unpack; ix++)
+            swap[iswap].unpacklist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
+      
+      swap[iswap].nunpack    = n;
+      swap[iswap].recv_buf   = new FFT_SCALAR[n];
+
+      utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
+        iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], n);
+    }
+  }
+
+  // for(int iswap = 0; iswap < nswap; iswap++) {
+  //   utils::logmesg(lmp, "[INFO] iswap {} sendproc {} npack {}  recvproc {} nunpack {} \n", iswap, 
+  //     swap[iswap].sendproc, swap[iswap].npack, swap[iswap].recvproc, swap[iswap].nunpack);
+  // }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+
+}
 /* ----------------------------------------------------------------------
    compute the PPPM long-range force, energy, virial
 ------------------------------------------------------------------------- */
@@ -94,6 +305,9 @@ void PPPMDPLR::compute(int eflag, int vflag)
   // if (me == 0) utils::logmesg(lmp,"[INFO] slabflag {}\n", slabflag);
   // if (me == 0) utils::logmesg(lmp,"[INFO] atom->q_flag {}\n", atom->q_flag);
 
+  utils::logmesg(lmp,"[INFO] begin PPPMDPLR::compute \n"); MPI_Barrier(MPI_COMM_WORLD);
+
+
   int i,j;
 
   // set energy/virial flags
@@ -102,7 +316,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
   ev_init(eflag,vflag);
 
   // utils::logmesg(lmp,"[INFO] eflag_atom  {} vflag_atom {}\n", eflag_atom, vflag_atom);
-  // utils::logmesg(lmp,"[INFO] evflag_atom  {} peratom_allocate_flag {}\n", evflag_atom, peratom_allocate_flag);
+  utils::logmesg(lmp,"[INFO] evflag_atom  {} peratom_allocate_flag {}\n", evflag_atom, peratom_allocate_flag);
 
 
   if (evflag_atom && !peratom_allocate_flag) allocate_peratom();
@@ -131,22 +345,70 @@ void PPPMDPLR::compute(int eflag, int vflag)
     nmax = atom->nmax;
     memory->create(part2grid,nmax,3,"pppm:part2grid");
   }
+  // if(comm->numa_id == NUMA_NUM - 1) {
+  memory->destroy(part2grid_node);
+  memory->destroy(x_node);
+  memory->create(part2grid_node,nmax,3,"pppm:part2grid_node");
+  memory->create(x_node, nmax, 3, "pppm:x_node");
+  memory->create(q_node, nmax, "pppm:q_node");
+  // }
 
+  utils::logmesg(lmp,"[INFO] finish q_node create {} \n", nmax); MPI_Barrier(MPI_COMM_WORLD);
+
+
+  nlocal_node = 0;
+  MPI_Allgather(&atom->nlocal,1,MPI_INT,nlocal_nodes,1,MPI_INT,comm->node_comm);
+  for(int i = 0; i < NUMA_NUM; i++) nlocal_node += nlocal_nodes[i];
+
+  utils::logmesg_arry(lmp,fmt::format("[info] before particle map nlocal_nodes  {}\n", nlocal_node), nlocal_nodes, NUMA_NUM, 1);
+  MPI_Barrier(MPI_COMM_WORLD);
+  
+  // gather node x
+  int displs[NUMA_NUM], recvcounts[NUMA_NUM];
+  for(int i = 0; i < NUMA_NUM; i++) recvcounts[i] = nlocal_nodes[i] * 3;
+  displs[0] = 0;
+  for (int i = 1; i < NUMA_NUM; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
+  MPI_Gatherv(atom->x[0], atom->nlocal * 3, MPI_DOUBLE, x_node[0], recvcounts, displs, MPI_DOUBLE, (NUMA_NUM - 1), comm->node_comm);
+
+  // gather q_node
+  for(int i = 0; i < NUMA_NUM; i++) recvcounts[i] = nlocal_nodes[i];
+  displs[0] = 0;
+  for (int i = 1; i < NUMA_NUM; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
+  MPI_Gatherv(atom->q, atom->nlocal, MPI_DOUBLE, q_node, recvcounts, displs, MPI_DOUBLE, (NUMA_NUM - 1), comm->node_comm);
+  
+
+  utils::logmesg_arry(lmp,fmt::format("[info] before particle map recvcounts   nmax {}\n", nmax), recvcounts,      NUMA_NUM, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] before particle map displs        {}\n", nlocal_node), displs,      NUMA_NUM, 1);
+    // utils::logmesg_arry_x(lmp,fmt::format("[info] before particle map atom x  {}\n", atom->nlocal), atom->x[0], atom->nlocal * 3, 1);
+  
   // find grid points for all my particles
   // map my particle charge onto my local 3d density grid
+  utils::logmesg_arry_x(lmp,fmt::format("[info] before particle map atom x  {}\n", atom->nlocal), atom->x[0], atom->nlocal * 3, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] before particle map atom q  {}\n", atom->nlocal), atom->q, atom->nlocal, 1);
+  if(comm->numa_id == NUMA_NUM - 1) {
+    utils::logmesg_arry_x(lmp,fmt::format("[info] before particle map atom x  {}\n", nlocal_node), x_node[0], nlocal_node * 3, 1);
+    utils::logmesg_arry(lmp,fmt::format("[info] before particle map atom q  {}\n", nlocal_node), q_node, nlocal_node, 1);
+  }
 
-  // utils::logmesg_arry_x(lmp,fmt::format("[info] before particle map atom x  {}\n", atom->nlocal), atom->x[0], atom->nlocal * 3, 1);
-
+  
   particle_map();
-  make_rho();
 
+  utils::logmesg(lmp,"[INFO] finish particle_map \n"); MPI_Barrier(MPI_COMM_WORLD);
+  
+  make_rho();
+  utils::logmesg(lmp,"[INFO] finish make_rho \n"); MPI_Barrier(MPI_COMM_WORLD);
+  
   // all procs communicate density values from their ghost cells
   //   to fully sum contribution in their 3d bricks
   // remap from 3d decomposition to FFT decomposition
-
+  
   gc->reverse_comm(Grid3d::KSPACE, this, REVERSE_RHO, 1, sizeof(FFT_SCALAR),
-                   gc_buf1, gc_buf2, MPI_FFT_SCALAR);
-                          
+                          gc_buf1, gc_buf2, MPI_FFT_SCALAR);
+  
+  reverse_node();
+  utils::logmesg(lmp,"[INFO] finish reverse comm \n"); MPI_Barrier(MPI_COMM_WORLD);
+  
+
   brick2fft();
 
   // compute potential gradient on my FFT grid and
@@ -243,6 +505,48 @@ void PPPMDPLR::compute(int eflag, int vflag)
 }
 
 
+void PPPMDPLR::reverse_node(){
+
+  if(comm->numa_id == NUMA_NUM - 1) {
+    MPI_Request *send_requests = new MPI_Request[nswap];
+    MPI_Request *recv_requests = new MPI_Request[nswap];
+    
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto recv_buf = swap[iswap].recv_buf;
+      auto nunpack = swap[iswap].nunpack;
+      auto recvproc = swap[iswap].recvproc;
+      MPI_Irecv(recv_buf, nunpack, MPI_DOUBLE, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
+    }
+  
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto send_buf = swap[iswap].send_buf;
+      auto list = swap[iswap].packlist;
+      auto npack = swap[iswap].npack;
+      auto sendproc = swap[iswap].sendproc;
+  
+  
+      FFT_SCALAR *src = &density_brick_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      for (int i = 0; i < npack; i++)
+        send_buf[i] = src[list[i]];
+      MPI_Isend(send_buf, npack, MPI_DOUBLE, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
+    }
+  
+    MPI_Waitall(26, send_requests, MPI_STATUS_IGNORE);
+    MPI_Waitall(26, recv_requests, MPI_STATUS_IGNORE);
+  
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto recv_buf = swap[iswap].recv_buf;
+      auto nunpack = swap[iswap].nunpack;
+      auto list = swap[iswap].unpacklist;
+      FFT_SCALAR *src = &density_brick_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      for (int i = 0; i < nunpack; i++)
+        src[list[i]] += recv_buf[i];
+    }
+    utils::logmesg(lmp, "[INFO] PPPM finish reverse_node \n");
+  }
+}
+
+
 
 #ifdef SELF_HEFFTE
 /* ----------------------------------------------------------------------
@@ -251,7 +555,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
 
 void PPPMDPLR::poisson_ik()
 {
-  if(comm->fft_type_flag == 0) poisson_ik_normal();
+  if(comm->fft_type_flag == 0) PPPM::poisson_ik();
   else if(comm->fft_type_flag == 1) poisson_ik_heffte();
   // int i,j,k,n;
   // double eng;
@@ -483,29 +787,29 @@ void PPPMDPLR::poisson_ik_heffte()
 {
   int i,j,k,n;
   double eng;
-  int _nfft;
   int xlo, xhi, ylo, yhi, zlo, zhi;
 
   xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
-  _nfft = nfft_brick;
 
   // transform charge density (r -> k)
 
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR density_fft \n"),density_fft, nfft_brick, 1 );
+
   n = 0;
 
-  for (int i = 0; i < _nfft; i++) {
+  for (int i = 0; i < nfft_brick; i++) {
     heffte_indata[i].real(density_fft[i]);
     heffte_indata[i].imag(ZEROF);
   }
 
   run_forward();
   n = 0;
-  for (int i = 0; i < _nfft; i++) {
+  for (int i = 0; i < nfft_brick; i++) {
     work1[n++] = heffte_outdata[i].real();
     work1[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, _nfft*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, nfft_brick*2, 1 );
   
 
   // global energy and virial contribution
@@ -516,17 +820,17 @@ void PPPMDPLR::poisson_ik_heffte()
   if (eflag_global || vflag_global) {
     if (vflag_global) {
       n = 0;
-      for (i = 0; i < _nfft; i++) {
-        eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
-        for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
+      for (i = 0; i < nfft_brick; i++) {
+        eng = s2 * greensfn_brick[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+        for (j = 0; j < 6; j++) virial[j] += eng*vg_brick[i][j];
         if (eflag_global) energy += eng;
         n += 2;
       }
     } else {
       n = 0;
-      for (i = 0; i < _nfft; i++) {
+      for (i = 0; i < nfft_brick; i++) {
         energy +=
-          s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
+          s2 * greensfn_brick[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
         n += 2;
       }
     }
@@ -536,12 +840,12 @@ void PPPMDPLR::poisson_ik_heffte()
   // multiply by Green's function to get V(k)
 
   n = 0;
-  for (i = 0; i < _nfft; i++) {
-    work1[n++] *= scaleinv * greensfn[i];
-    work1[n++] *= scaleinv * greensfn[i];
+  for (i = 0; i < nfft_brick; i++) {
+    work1[n++] *= scaleinv * greensfn_brick[i];
+    work1[n++] *= scaleinv * greensfn_brick[i];
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, _nfft*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, nfft_brick*2, 1 );
 
 
   // extra FFTs for per-atom energy/virial
@@ -565,19 +869,19 @@ void PPPMDPLR::poisson_ik_heffte()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_indata[n].real(-fkx[i]*work1[2*n+1]);
-        heffte_indata[n].imag(fkx[i] *work1[2*n]);
+        heffte_indata[n].real(-fkx_brick[i]*work1[2*n+1]);
+        heffte_indata[n].imag(fkx_brick[i] *work1[2*n]);
         n += 1;
       }
 
   run_backward();
   n = 0;
-  for (int i = 0; i < _nfft; i++) {
+  for (int i = 0; i < nfft_brick; i++) {
     work2[n++] = heffte_outdata[i].real();
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, _nfft*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, nfft_brick*2, 1 );
 
   n = 0;
   for (k = nzlo_in; k <= nzhi_in; k++)
@@ -594,19 +898,19 @@ void PPPMDPLR::poisson_ik_heffte()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_indata[n].real(-fky[j]*work1[2*n+1]);
-        heffte_indata[n].imag(fky[j] *work1[2*n]);
+        heffte_indata[n].real(-fky_brick[j]*work1[2*n+1]);
+        heffte_indata[n].imag(fky_brick[j] *work1[2*n]);
         n += 1;
       }
 
   run_backward();
   n = 0;
-  for (int i = 0; i < _nfft; i++) {
+  for (int i = 0; i < nfft_brick; i++) {
     work2[n++] = heffte_outdata[i].real();
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, _nfft*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, nfft_brick*2, 1 );
 
   
 
@@ -624,19 +928,19 @@ void PPPMDPLR::poisson_ik_heffte()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_indata[n].real(-fkz[k]*work1[2*n+1]);
-        heffte_indata[n].imag(fkz[k] *work1[2*n]);
+        heffte_indata[n].real(-fkz_brick[k]*work1[2*n+1]);
+        heffte_indata[n].imag(fkz_brick[k] *work1[2*n]);
         n += 1;
       }
 
   run_backward();
   n = 0;
-  for (int i = 0; i < _nfft; i++) {
+  for (int i = 0; i < nfft_brick; i++) {
     work2[n++] = heffte_outdata[i].real();
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, _nfft*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, nfft_brick*2, 1 );
 
   n = 0;
   for (k = nzlo_in; k <= nzhi_in; k++)
@@ -647,144 +951,125 @@ void PPPMDPLR::poisson_ik_heffte()
       }
 }
 
-void PPPMDPLR::poisson_ik_normal()
+
+/* ----------------------------------------------------------------------
+   find center grid pt for each of my particles
+   check that full stencil for the particle will fit in my 3d brick
+   store central grid pt indices in part2grid array
+------------------------------------------------------------------------- */
+
+void PPPMDPLR::particle_map()
 {
-  int i,j,k,n;
-  double eng;
-
-  // transform charge density (r -> k)
-
-  n = 0;
-  for (i = 0; i < nfft; i++) {
-    work1[n++] = density_fft[i];
-    work1[n++] = ZEROF;
+  if(comm->fft_type_flag < 2) {
+    PPPM::particle_map();
+  } else {
+    particle_map_node();
   }
 
-  fft1->compute(work1,work1,FFT3d::FORWARD);
+  if(comm->numa_id == NUMA_NUM - 1)
+    particle_map_node();
+}
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM work1 \n"),work1, nfft*2, 1 );
+void PPPMDPLR::particle_map_node() {
+  int nx,ny,nz;
+
+  int flag = 0;
+
+  if (!std::isfinite(boxlo[0]) || !std::isfinite(boxlo[1]) || !std::isfinite(boxlo[2]))
+    error->one(FLERR,"particle_map_node Non-numeric box dimensions - simulation unstable");
+
+  for (int i = 0; i < nlocal_node; i++) {
+
+    // order = even:
+    //   (nx,ny,nz) = global index of grid pt to "lower left" of charge
+    // order = odd:
+    //   (nx,ny,nz) = global index of grid pt closest to charge due to shift
+    // current particle coord can be outside global and local box
+    // add/subtract OFFSET to avoid int(-0.75) = 0 when want it to be -1
+
+    nx = static_cast<int> ((x_node[i][0]-boxlo[0])*delxinv+shift) - OFFSET;
+    ny = static_cast<int> ((x_node[i][1]-boxlo[1])*delyinv+shift) - OFFSET;
+    nz = static_cast<int> ((x_node[i][2]-boxlo[2])*delzinv+shift) - OFFSET;
+
+    part2grid_node[i][0] = nx;
+    part2grid_node[i][1] = ny;
+    part2grid_node[i][2] = nz;
+
+    // check that entire stencil around nx,ny,nz will fit in my 3d brick
+
+    if (nx+nlower < nxlo_node_out || nx+nupper > nxhi_node_out ||
+        ny+nlower < nylo_node_out || ny+nupper > nyhi_node_out ||
+        nz+nlower < nzlo_node_out || nz+nupper > nzhi_node_out)
+      flag = 1;
+  }
+
+  if (flag) error->one(FLERR,"Out of range atoms - cannot compute PPPM");
+}
 
 
-  // global energy and virial contribution
 
-  double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
-  double s2 = scaleinv*scaleinv;
+/* ----------------------------------------------------------------------
+   create discretized "density" on section of global grid due to my particles
+   density(x,y,z) = charge "density" at grid points of my 3d brick
+   (nxlo:nxhi,nylo:nyhi,nzlo:nzhi) is extent of my brick (including ghosts)
+   in global grid
+------------------------------------------------------------------------- */
 
-  if (eflag_global || vflag_global) {
-    if (vflag_global) {
-      n = 0;
-      for (i = 0; i < nfft; i++) {
-        eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
-        for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
-        if (eflag_global) energy += eng;
-        n += 2;
-      }
-    } else {
-      n = 0;
-      for (i = 0; i < nfft; i++) {
-        energy +=
-          s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
-        n += 2;
+void PPPMDPLR::make_rho() {
+  if(comm->fft_type_flag < 2) {
+    PPPM::make_rho();
+  } else {
+    make_rho_node();
+  }
+  if(comm->numa_id == NUMA_NUM - 1)
+    make_rho_node();
+}
+
+
+void PPPMDPLR::make_rho_node()
+{
+  int l,m,n,nx,ny,nz,mx,my,mz;
+  FFT_SCALAR dx,dy,dz,x0,y0,z0;
+
+  // clear 3d density array
+
+  memset(&(density_brick_node[nzlo_node_out][nylo_node_out][nxlo_node_out]),0,
+         ngrid_node*sizeof(FFT_SCALAR));
+
+  // loop over my charges, add their contribution to nearby grid points
+  // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
+  // (dx,dy,dz) = distance to "lower left" grid pt
+  // (mx,my,mz) = global indices of moving stencil pt
+
+  // double *q_node = atom->q_node;
+  // double **x_node = atom->x_node;
+  // int nlocal = atom->nlocal;
+
+  for (int i = 0; i < nlocal_node; i++) {
+
+    nx = part2grid_node[i][0];
+    ny = part2grid_node[i][1];
+    nz = part2grid_node[i][2];
+    dx = nx+shiftone - (x_node[i][0]-boxlo[0])*delxinv;
+    dy = ny+shiftone - (x_node[i][1]-boxlo[1])*delyinv;
+    dz = nz+shiftone - (x_node[i][2]-boxlo[2])*delzinv;
+
+    compute_rho1d(dx,dy,dz);
+
+    z0 = delvolinv * q_node[i];
+    for (n = nlower; n <= nupper; n++) {
+      mz = n+nz;
+      y0 = z0*rho1d[2][n];
+      for (m = nlower; m <= nupper; m++) {
+        my = m+ny;
+        x0 = y0*rho1d[1][m];
+        for (l = nlower; l <= nupper; l++) {
+          mx = l+nx;
+          density_brick_node[mz][my][mx] += x0*rho1d[0][l];
+        }
       }
     }
   }
-
-  // scale by 1/total-grid-pts to get rho(k)
-  // multiply by Green's function to get V(k)
-
-  n = 0;
-  for (i = 0; i < nfft; i++) {
-    work1[n++] *= scaleinv * greensfn[i];
-    work1[n++] *= scaleinv * greensfn[i];
-  }
-
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM work1 greensn \n"),work1, nfft*2, 1 );
-
-
-  // extra FFTs for per-atom energy/virial
-
-  if (evflag_atom) poisson_peratom();
-
-  // triclinic system
-
-  if (triclinic) {
-    poisson_ik_triclinic();
-    return;
-  }
-
-  // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
-  // FFT leaves data in 3d brick decomposition
-  // copy it into inner portion of vdx,vdy,vdz arrays
-
-  // x direction gradient
-
-  n = 0;
-  for (k = nzlo_fft; k <= nzhi_fft; k++)
-    for (j = nylo_fft; j <= nyhi_fft; j++)
-      for (i = nxlo_fft; i <= nxhi_fft; i++) {
-        work2[n] = -fkx[i]*work1[n+1];
-        work2[n+1] = fkx[i]*work1[n];
-        n += 2;
-      }
-
-  fft2->compute(work2,work2,FFT3d::BACKWARD);
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 0 back \n"),work2, nfft_brick*2, 1 );
-
-
-  n = 0;
-  for (k = nzlo_in; k <= nzhi_in; k++)
-    for (j = nylo_in; j <= nyhi_in; j++)
-      for (i = nxlo_in; i <= nxhi_in; i++) {
-        vdx_brick[k][j][i] = work2[n];
-        n += 2;
-      }
-
-  // y direction gradient
-
-  n = 0;
-  for (k = nzlo_fft; k <= nzhi_fft; k++)
-    for (j = nylo_fft; j <= nyhi_fft; j++)
-      for (i = nxlo_fft; i <= nxhi_fft; i++) {
-        work2[n] = -fky[j]*work1[n+1];
-        work2[n+1] = fky[j]*work1[n];
-        n += 2;
-      }
-
-  fft2->compute(work2,work2,FFT3d::BACKWARD);
-
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 1 back \n"),work2, nfft_brick*2, 1 );
-
-
-  n = 0;
-  for (k = nzlo_in; k <= nzhi_in; k++)
-    for (j = nylo_in; j <= nyhi_in; j++)
-      for (i = nxlo_in; i <= nxhi_in; i++) {
-        vdy_brick[k][j][i] = work2[n];
-        n += 2;
-      }
-
-  // z direction gradient
-
-  n = 0;
-  for (k = nzlo_fft; k <= nzhi_fft; k++)
-    for (j = nylo_fft; j <= nyhi_fft; j++)
-      for (i = nxlo_fft; i <= nxhi_fft; i++) {
-        work2[n] = -fkz[k]*work1[n+1];
-        work2[n+1] = fkz[k]*work1[n];
-        n += 2;
-      }
-
-  fft2->compute(work2,work2,FFT3d::BACKWARD);
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPM 2 back \n"),work2, nfft_brick*2, 1 );
-
-
-  n = 0;
-  for (k = nzlo_in; k <= nzhi_in; k++)
-    for (j = nylo_in; j <= nyhi_in; j++)
-      for (i = nxlo_in; i <= nxhi_in; i++) {
-        vdz_brick[k][j][i] = work2[n];
-        n += 2;
-      }
 }
 
 /* ----------------------------------------------------------------------
@@ -799,11 +1084,33 @@ void PPPMDPLR::brick2fft()
   // remap could be done as pre-stage of FFT,
   //   but this works optimally on only double values, not complex values
 
-  n = 0;
-  for (iz = nzlo_in; iz <= nzhi_in; iz++)
-    for (iy = nylo_in; iy <= nyhi_in; iy++)
-      for (ix = nxlo_in; ix <= nxhi_in; ix++)
-        density_fft[n++] = density_brick[iz][iy][ix];
+  if(comm->fft_type_flag < 2) {
+    n = 0;
+    for (iz = nzlo_in; iz <= nzhi_in; iz++)
+      for (iy = nylo_in; iy <= nyhi_in; iy++)
+        for (ix = nxlo_in; ix <= nxhi_in; ix++)
+          density_fft[n++] = density_brick[iz][iy][ix];
+  } else {
+    n = 0;
+    for (iz = nzlo_node_in; iz <= nzhi_node_in; iz++)
+      for (iy = nylo_node_in; iy <= nyhi_node_in; iy++)
+        for (ix = nxlo_node_in; ix <= nxhi_node_in; ix++)
+        density_fft_node[n++] = density_brick_node[iz][iy][ix];
+      }
+
+
+  utils::logmesg_arry(lmp, "[INFO] desity_fft", density_fft, n, 1);
+  if(comm->numa_id == NUMA_NUM - 1) {
+    n = 0;
+    for (iz = nzlo_node_in; iz <= nzhi_node_in; iz++)
+      for (iy = nylo_node_in; iy <= nyhi_node_in; iy++)
+        for (ix = nxlo_node_in; ix <= nxhi_node_in; ix++)
+        density_fft_node[n++] = density_brick_node[iz][iy][ix];
+    
+    utils::logmesg_arry(lmp, "[INFO] density_fft_node", density_fft_node, n, 1);
+  }
+
+
 
   if(comm->fft_type_flag == 0) {
     remap->perform(density_fft,density_fft,work1);
@@ -812,6 +1119,9 @@ void PPPMDPLR::brick2fft()
 
 void PPPMDPLR::compute_gf_ik()
 {
+
+  memory->create(greensfn_brick,nfft_both,"pppm:greensfn_brick");
+
   const double * const prd = domain->prd;
 
   const double xprd = prd[0];
@@ -840,12 +1150,8 @@ void PPPMDPLR::compute_gf_ik()
 
   int xlo, xhi, ylo, yhi, zlo, zhi;
 
-  if(comm->fft_type_flag == 0) {
-    xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
-  } else {
-    xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
-  }
-
+  xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
+  
   n = 0;
   for (m = zlo; m <= zhi; m++) {
     mper = m - nz_pppm*(2*m/nz_pppm);
@@ -890,8 +1196,8 @@ void PPPMDPLR::compute_gf_ik()
               }
             }
           }
-          greensfn[n++] = numerator*sum1/denominator;
-        } else greensfn[n++] = 0.0;
+          greensfn_brick[n++] = numerator*sum1/denominator;
+        } else greensfn_brick[n++] = 0.0;
       }
     }
   }
@@ -900,10 +1206,20 @@ void PPPMDPLR::compute_gf_ik()
 
 void PPPMDPLR::setup()
 {
+
+  PPPM::setup();
+
   if (triclinic) {
     setup_triclinic();
     return;
   }
+
+  memory->create1d_offset(fkx_brick,nxlo_in,nxhi_in,"pppm:fkx_brick");
+  memory->create1d_offset(fky_brick,nylo_in,nyhi_in,"pppm:fky_brick");
+  memory->create1d_offset(fkz_brick,nzlo_in,nzhi_in,"pppm:fkz_brick");
+
+  memory->create(vg_brick,nfft_both,6,"pppm:vg");
+
 
   // perform some checks to avoid illegal boundaries with read_data
 
@@ -947,25 +1263,21 @@ void PPPMDPLR::setup()
 
   int xlo, xhi, ylo, yhi, zlo, zhi;
 
-  if(comm->fft_type_flag == 0) {
-    xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
-  } else {
-    xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
-  }
+  xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
 
   for (i = xlo; i <= xhi; i++) {
     per = i - nx_pppm*(2*i/nx_pppm);
-    fkx[i] = unitkx*per;
+    fkx_brick[i] = unitkx*per;
   }
 
   for (i = ylo; i <= yhi; i++) {
     per = i - ny_pppm*(2*i/ny_pppm);
-    fky[i] = unitky*per;
+    fky_brick[i] = unitky*per;
   }
 
   for (i = zlo; i <= zhi; i++) {
     per = i - nz_pppm*(2*i/nz_pppm);
-    fkz[i] = unitkz*per;
+    fkz_brick[i] = unitkz*per;
   }
 
   // virial coefficients
@@ -976,22 +1288,22 @@ void PPPMDPLR::setup()
   for (k = zlo; k <= zhi; k++) {
     for (j = ylo; j <= yhi; j++) {
       for (i = xlo; i <= xhi; i++) {
-        sqk = fkx[i]*fkx[i] + fky[j]*fky[j] + fkz[k]*fkz[k];
+        sqk = fkx_brick[i]*fkx_brick[i] + fky_brick[j]*fky_brick[j] + fkz_brick[k]*fkz_brick[k];
         if (sqk == 0.0) {
-          vg[n][0] = 0.0;
-          vg[n][1] = 0.0;
-          vg[n][2] = 0.0;
-          vg[n][3] = 0.0;
-          vg[n][4] = 0.0;
-          vg[n][5] = 0.0;
+          vg_brick[n][0] = 0.0;
+          vg_brick[n][1] = 0.0;
+          vg_brick[n][2] = 0.0;
+          vg_brick[n][3] = 0.0;
+          vg_brick[n][4] = 0.0;
+          vg_brick[n][5] = 0.0;
         } else {
           vterm = -2.0 * (1.0/sqk + 0.25/(g_ewald*g_ewald));
-          vg[n][0] = 1.0 + vterm*fkx[i]*fkx[i];
-          vg[n][1] = 1.0 + vterm*fky[j]*fky[j];
-          vg[n][2] = 1.0 + vterm*fkz[k]*fkz[k];
-          vg[n][3] = vterm*fkx[i]*fky[j];
-          vg[n][4] = vterm*fkx[i]*fkz[k];
-          vg[n][5] = vterm*fky[j]*fkz[k];
+          vg_brick[n][0] = 1.0 + vterm*fkx_brick[i]*fkx_brick[i];
+          vg_brick[n][1] = 1.0 + vterm*fky_brick[j]*fky_brick[j];
+          vg_brick[n][2] = 1.0 + vterm*fkz_brick[k]*fkz_brick[k];
+          vg_brick[n][3] = vterm*fkx_brick[i]*fky_brick[j];
+          vg_brick[n][4] = vterm*fkx_brick[i]*fkz_brick[k];
+          vg_brick[n][5] = vterm*fky_brick[j]*fkz_brick[k];
         }
         n++;
       }
