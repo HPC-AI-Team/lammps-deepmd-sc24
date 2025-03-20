@@ -43,9 +43,341 @@ enum{FORWARD_IK,FORWARD_AD,FORWARD_IK_PERATOM,FORWARD_AD_PERATOM};
 #define ONEF  1.0
 #endif
 
+#define PI 3.14159265358979323846
+
+inline void init_local_W(FFT_SCALAR *Wsin[3], FFT_SCALAR *Wcos[3], FFT_SCALAR *Wsin_i[3], FFT_SCALAR *Wcos_i[3], 
+      int *fft_size, int *lcl_size, int *loc) {
+
+  for(int dir = 0; dir < 3; dir++) {
+    for (int m = 0; m < fft_size[dir]; m++) {
+      for (int n = 0, j = lcl_size[dir] * loc[dir]; n < lcl_size[dir]; n++, j++) {
+        int ptr = m * lcl_size[dir] + n;
+        // int ptr = n * fft_size[dir] + m;
+        double theta;
+        theta = -2.0 * PI * m * j / fft_size[dir];
+        Wcos[dir][ptr] = cos(theta);
+        Wsin[dir][ptr] = sin(theta);
+        theta = 2.0 * PI * m * j / fft_size[dir];
+        Wcos_i[dir][ptr] = cos(theta);
+        Wsin_i[dir][ptr] = sin(theta);
+      }
+    }
+  }
+}
+
+void FFT_UTOFU_BG::init(int nx_pppm, int ny_pppm, int nz_pppm,
+  int nxlo_in, int nylo_in, int nzlo_in, int nxhi_in, int nyhi_in, int nzhi_in) {
+
+  nodegrid = comm->nodegrid;
+  nodeloc = comm->nodeloc;
+  fft_size[0] = nx_pppm;
+  fft_size[1] = ny_pppm;
+  fft_size[2] = nz_pppm; 
+
+  lcl_size[0] = nxhi_in - nxlo_in + 1;
+  lcl_size[1] = nyhi_in - nylo_in + 1;
+  lcl_size[2] = nzhi_in - nzlo_in + 1;
+
+  nfft = fft_size[0] * fft_size[1] * fft_size[2];
+  nfft_brick = lcl_size[0] * lcl_size[1] * lcl_size[2];
+
+  nblocks[0] = lcl_size[1] * lcl_size[2];
+  nblocks[1] = lcl_size[0] * lcl_size[2];
+  nblocks[2] = lcl_size[1] * lcl_size[0];
+
+  dgemm_size[0] = (int)fft_size[0] * nblocks[0];
+  dgemm_size[1] = (int)fft_size[1] * nblocks[1];
+  dgemm_size[2] = (int)fft_size[2] * nblocks[2]; 
+
+  utils::logmesg(lmp, "[INFO] FFT_UTOFU npppm {} {} {} \n", nx_pppm,ny_pppm,nz_pppm);
+  utils::logmesg(lmp, "[INFO] FFT_UTOFU fft_out  {}-{} {}-{} {}-{} \n", nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in);
+  utils::logmesg_arry(lmp,fmt::format("[info] FFT_UTOFU fft_size \n"), fft_size, 3, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] FFT_UTOFU lcl_size \n"), lcl_size, 3, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] FFT_UTOFU nblocks \n"), nblocks, 3, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] FFT_UTOFU dgemm_size \n"), dgemm_size, 3, 1);
+
+  maxGemmsize = MAX(MAX(dgemm_size[0], dgemm_size[1]), dgemm_size[2]);
+
+  for(int dir = 0; dir < 3; dir++) {
+    memory->create(Wcos[dir],fft_size[dir] * lcl_size[dir],"pppm:Wcos");
+    memory->create(Wsin[dir],fft_size[dir] * lcl_size[dir],"pppm:Wsin");
+    memory->create(Wcos_i[dir],fft_size[dir] * lcl_size[dir],"pppm:Wcos_i");
+    memory->create(Wsin_i[dir],fft_size[dir] * lcl_size[dir],"pppm:Wsin_i");
+  }
+  memory->create(calcu_buf, maxGemmsize * 4,"pppm:calcu_buf");
+  memory->create(reduce_data, comm->nnode * 2,"pppm:calcu_buf");
+  
+  
+  for(int dir = 0; dir < 3; dir++) {
+    memory->create(nfft_bricks[dir],        comm->comm1D_size[dir],"pppm:nfft_bricks[dir]");
+    memory->create(nfft_bricks_offset[dir], comm->comm1D_size[dir],"pppm:nfft_bricks_offset[dir]");
+  }
+  
+  for(int dir = 0; dir < 3; dir++) {
+    MPI_Allgather(&nfft_brick, 1, MPI_INT, nfft_bricks[dir],        1, MPI_INT, comm->comm1D[dir]);
+    max_nfft_brick[dir] = 0;
+    for(int i = 0; i < comm->comm1D_size[dir]; i++) 
+      if(max_nfft_brick[dir] < nfft_bricks[dir][i]) 
+        max_nfft_brick[dir] = nfft_bricks[dir][i];
+
+    utils::logmesg_arry(lmp, fmt::format("[INFO] nfft_bricks dir {}", dir), nfft_bricks[dir], comm->comm1D_size[dir], 1);
+  }
+
+  nfft_bricks_offset[0][0] = nfft_bricks_offset[1][0] = nfft_bricks_offset[2][0] = 0;
+  for(int dir = 0; dir < 3; dir++) {
+    for(int i = 1; i < comm->comm1D_size[dir]; i++) {
+      nfft_bricks_offset[dir][i] = nfft_bricks_offset[dir][i-1] + nfft_bricks[dir][i-1];
+    }
+    utils::logmesg_arry(lmp, fmt::format("[INFO] nfft_bricks_offset dir {}", dir), nfft_bricks_offset[dir], comm->comm1D_size[dir], 1);
+  }
+
+  init_local_W(Wsin, Wcos, Wsin_i, Wcos_i, fft_size, lcl_size, nodeloc);
+
+  for(int dir = 0; dir < 3; dir++) {
+    utils::logmesg_arry(lmp, fmt::format("[INFO] Wcos dir {}", dir), Wcos[dir], fft_size[dir]*lcl_size[dir], 1);
+    utils::logmesg_arry(lmp, fmt::format("[INFO] Wsin dir {}", dir), Wsin[dir], fft_size[dir]*lcl_size[dir], 1);
+  }
+
+}
+
+void FFT_UTOFU_BG::init_utofu_bg() {
+  int pre[3];
+  int nxt[3];
+
+  for(int dir = 0; dir < 3; dir++) {
+    pre[dir] = (comm->me3d[dir] + comm->comm1D_size[dir] - 1) % comm->comm1D_size[dir];
+    nxt[dir] = (comm->me3d[dir] + 1) % comm->comm1D_size[dir];
+  }
+
+  for(int dir = 0; dir < 3; dir++) {
+    for(int tni = dir*2; tni < (dir+1)*2; tni++) {
+      for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+        // rc = utofu_alloc_vbg(tni, 2, 0, lcl_vbg_ids[tni][r]);
+        // if (rc != UTOFU_SUCCESS) {
+        //   error->one(FLERR,"utofu_alloc_vbg failed  tni {} r {} rc {} \n", tni, r, rc);
+        // }
+        lcl_vbg_ids[tni][r][0] = comm->lcl_vbg_ids[tni][r][0];
+        lcl_vbg_ids[tni][r][1] = comm->lcl_vbg_ids[tni][r][1];
+        MPI_Allgather(lcl_vbg_ids[tni][r], 2, MPI_UINT64_T, rmt_vbg_ids[tni][r][0], 2, MPI_UINT64_T, comm->comm1D[dir]);
+      }
+    }
+  }
+
+  for(int dir = 0; dir < 3; dir++) {
+    for(int tni = dir*2; tni < (dir+1)*2; tni++) {
+      for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+        vbg_settings[tni][r][0].vbg_id = lcl_vbg_ids[tni][r][0];
+        vbg_settings[tni][r][0].src_lcl_vbg_id = lcl_vbg_ids[tni][r][1];
+        vbg_settings[tni][r][0].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+        vbg_settings[tni][r][0].dst_lcl_vbg_id = lcl_vbg_ids[tni][r][1];
+        vbg_settings[tni][r][0].dst_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+        vbg_settings[tni][r][0].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
+
+        vbg_settings[tni][r][1].vbg_id = lcl_vbg_ids[tni][r][1];
+        vbg_settings[tni][r][1].src_lcl_vbg_id = lcl_vbg_ids[tni][r][0];
+        vbg_settings[tni][r][1].src_rmt_vbg_id = rmt_vbg_ids[tni][r][pre[dir]][1];
+        vbg_settings[tni][r][1].dst_lcl_vbg_id = lcl_vbg_ids[tni][r][0];
+        vbg_settings[tni][r][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][r][nxt[dir]][1];
+        vbg_settings[tni][r][1].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
+
+        if(r == comm->me3d[dir]) {
+          vbg_settings[tni][r][0].src_lcl_vbg_id = UTOFU_VBG_ID_NULL;
+          vbg_settings[tni][r][0].src_rmt_vbg_id = rmt_vbg_ids[tni][r][pre[dir]][1];
+
+          vbg_settings[tni][r][1].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+          vbg_settings[tni][r][1].dst_lcl_vbg_id = UTOFU_VBG_ID_NULL;
+        } else if(r == nxt[dir]) {
+          vbg_settings[tni][r][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][r][nxt[dir]][0];
+        }
+
+        rc = utofu_set_vbg(vbg_settings[tni][r], 2);
+        if (rc != UTOFU_SUCCESS) {
+          error->one(FLERR,"utofu_set_vbg failed rc {} \n",rc);
+        }
+        MPI_Barrier(comm->comm1D[dir]);
+        utils::logmesg(lmp, "[INFO] utofu_set_vbg success dir {} tni {} r {} \n", dir, tni, r);
+      }
+    }
+  }
+  MPI_Barrier(comm->numa_comm);
+}
+
+inline void print_array_2d(double *buf, int M, int N, std::string mesg, LAMMPS *lmp) {
+  std::string tmp;
+  tmp += fmt::format("[INFO] print_array_2d  {}\n", mesg.c_str());
+
+  for (int i = 0; i < M; i++) {
+    for (int j = 0; j < N; j++) {
+      tmp += fmt::format(" {:<3.9f},", buf[i*N+j]);
+    }
+    tmp += "\n";
+  }
+  utils::logmesg(lmp, tmp);
+}
+
+inline void gather_inner_data_printf(int nfft_brick, int nnode, MPI_Comm numa_comm,
+  FFT_SCALAR *in_data, int *nodegrid, int *lcl_size, int * fft_size, int N, int nfft, LAMMPS *lmp, std::string mesg) {
+  std::vector<FFT_SCALAR> recv_data(nfft_brick * nnode);
+  std::vector<FFT_SCALAR> all_data(nfft_brick * nnode);
+  MPI_Gather(in_data, nfft_brick, MPI_DOUBLE, recv_data.data(), nfft_brick, MPI_DOUBLE, 0, numa_comm);
+
+  for (int pzIdx = 0; pzIdx < nodegrid[2]; ++pzIdx) {
+    for (int pyIdx = 0; pyIdx < nodegrid[1]; ++pyIdx) {
+      for (int pxIdx = 0; pxIdx < nodegrid[0]; ++pxIdx) {
+            int procRank = pzIdx * (nodegrid[1] * nodegrid[0]) + pyIdx * nodegrid[0] + pxIdx;
+            int baseX = pxIdx * lcl_size[0];
+            int baseY = pyIdx * lcl_size[1];
+            int baseZ = pzIdx * lcl_size[2];
+            int offset = nfft_brick * procRank;
+
+            // 重新映射到全局网格
+            for (int k = 0; k < lcl_size[2]; ++k) {
+              for (int j = 0; j < lcl_size[1]; ++j) {
+                for (int i = 0; i < lcl_size[0]; ++i) {
+                      int ptr = (baseZ + k) * fft_size[1] * fft_size[0] + (baseY + j) * fft_size[0] + (baseX + i);
+                      all_data[ptr]  = recv_data[offset++];
+                    }
+                }
+            }
+        }
+    }
+  }
+
+  // std::string tmp;
+  // tmp += fmt::format("[INFO] PPPMDPLR recv_data {}\n", mesg.c_str());
+  // tmp += "{";
+  // for(int i = 0; i < nfft ;i += 1) {
+  //    tmp += fmt::format(" {:<3.9f},", recv_data[i]);
+  // }
+  // tmp += "}\n";
+  // utils::logmesg(lmp, tmp);
+
+  // tmp = "";
+  // tmp += fmt::format("[INFO] PPPMDPLR all_data {}\n", mesg.c_str());
+  // tmp += "{";
+  // for(int i = 0; i < nfft ;i += 1) {
+  //    tmp += fmt::format(" {:<3.9f},", all_data[i]);
+  // }
+  // tmp += "}\n";
+  // utils::logmesg(lmp, tmp);
+
+  // utils::logmesg_arry(lmp, fmt::format("PPPMDPLR in_data dir \n"),in_data,2*nfft_brick, 1 );
+  // utils::logmesg_arry(lmp, fmt::format("\nPPPMDPLR all_data {}\n", mesg.c_str()),all_data.data(), nfft, 1 );
+  print_array_2d(all_data.data(), nfft_brick*nnode/N, N , fmt::format("\nPPPMDPLR all_data {}\n", mesg.c_str()), lmp);
+
+}
+
+void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
+  FFT_SCALAR *_Wcos[3], *_Wsin[3];
+
+  if(FFT_DIR == 0) {
+    for(int dir = 0; dir < 3; dir++) _Wcos[dir] = Wcos[dir];
+    for(int dir = 0; dir < 3; dir++) _Wsin[dir] = Wsin[dir];
+  } else {
+    for(int dir = 0; dir < 3; dir++) _Wcos[dir] = Wcos_i[dir];
+    for(int dir = 0; dir < 3; dir++) _Wsin[dir] = Wsin_i[dir];
+
+  }
+
+
+  gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+    in_data, nodegrid, lcl_size, fft_size , fft_size[0], nfft, lmp, "input data" );
+
+  FFT_SCALAR *cos_out[2], *sin_out[2];
+  for(int dir = 0; dir < 3; dir++) {
+    cos_out[0] = calcu_buf;
+    sin_out[0] = cos_out[0] + dgemm_size[dir];
+    cos_out[1] = sin_out[0] + dgemm_size[dir];
+    sin_out[1] = cos_out[1] + dgemm_size[dir];
+
+    FFT_SCALAR *in_data_real = in_data;
+    FFT_SCALAR *in_data_imag = in_data + nfft_brick;
+
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+      1.0, _Wcos[dir], lcl_size[dir],
+      in_data_real, lcl_size[dir],
+      0.0, cos_out[0], nblocks[dir]
+    );
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+      1.0, _Wsin[dir], lcl_size[dir],
+      in_data_imag, lcl_size[dir],
+      0.0, cos_out[1], nblocks[dir]
+    );
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+      1.0, _Wsin[dir], lcl_size[dir],
+      in_data_real, lcl_size[dir], 
+      0.0, sin_out[0], nblocks[dir]
+    );
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+      1.0, _Wcos[dir], lcl_size[dir],
+      in_data_imag, lcl_size[dir], 
+      0.0, sin_out[1], nblocks[dir]
+    );
+
+    for(int i = 0; i < dgemm_size[dir]; i++) {
+      cos_out[0][i] -= cos_out[1][i];
+      sin_out[0][i] += sin_out[1][i];
+    }
+
+    utils::logmesg_arry(lmp, fmt::format("PPPMDPLR cos_out dir {} \n", dir),calcu_buf,2*dgemm_size[dir], 1 );
+
+
+    memset(in_data, 0, nfft_brick * sizeof(FFT_SCALAR) *2);
+
+    // MPI_Request requests[1000];
+    // int nrequst = 0;
+
+    // for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+    //   MPI_Ireduce(&cos_out[0][nfft_bricks_offset[dir][r]],  in_data,                     nfft_bricks[dir][r], MPI_DOUBLE, MPI_SUM, r, comm->comm1D[dir], &requests[nrequst++]);
+    //   MPI_Ireduce(&sin_out[0][nfft_bricks_offset[dir][r]],  in_data+nfft_bricks[dir][r], nfft_bricks[dir][r], MPI_DOUBLE, MPI_SUM, r, comm->comm1D[dir], &requests[nrequst++]);
+    // }
+    // MPI_Waitall(nrequst, requests, MPI_STATUS_IGNORE);
+
+    // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+    //   in_data, nodegrid, lcl_size, fft_size ,  fft_size[(dir+1)%3 ] ,nfft, lmp, fmt::format("out dir {}", dir) );
+    
+    for(int itype = 0; itype < 2; itype++) {
+      double *_in_buf = in_data + itype * nfft_brick;
+      for(int p = 0; p < max_nfft_brick[dir]; p+=2) {
+        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+          int size = nfft_bricks[dir][r] - p;
+          if(size <= 0) continue;
+          if(size > 2) size = 2;
+          // for(int i = 0; i < size; i++) 
+            // reduce_data[r*2+i] = calcu_buf[nfft_bricks_offset[dir][r] * 2 + p + i];
+          // utofu_reduce_double(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_BFPSUM, &reduce_data[r*2], size, 0);
+          double *_out_buf = itype == 0 ? &cos_out[0][nfft_bricks_offset[dir][r]] : &sin_out[0][nfft_bricks_offset[dir][r]];
+          utofu_reduce_double(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_BFPSUM, 
+                        &_out_buf[p], size, 0);
+        }
+  
+        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+          int size = nfft_bricks[dir][r] - p;
+          if(size <= 0) continue;
+          if(size > 2) size = 2;
+          do {
+            rc = utofu_poll_reduce_double(lcl_vbg_ids[dir*2][r][0], 0, &reduce_data[r*2]);
+          } while (rc == UTOFU_ERR_NOT_COMPLETED);
+          // printf("utofu_reduce_double recv ring %d \n", r); fflush(stdout);
+          assert(rc == UTOFU_SUCCESS);
+          if(r == comm->me3d[dir]) {
+            for(int i = 0; i < size; i++) _in_buf[p+i] = reduce_data[r*2+i]; 
+          };
+        }
+        MPI_Barrier(comm->comm1D[dir]);
+      }
+    }
+    // utils::logmesg_arry(lmp, fmt::format("PPPMDPLR result dir {} \n", dir),in_data,2*nfft_brick, 1 );
+
+  }
+
+  gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+    in_data, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir real {}", 0) );
+  gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+    in_data+nfft_brick, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir imag {}", 0) );
+}
 
 /* ---------------------------------------------------------------------- */
-
 
 PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   PPPM(lmp)
@@ -55,6 +387,9 @@ PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   part2grid_node = nullptr;
   vg_brick = nullptr;
   fkx_brick = nullptr; fky_brick = nullptr; fkz_brick = nullptr;
+  work1_node = work2_node = nullptr;
+
+  fft_utofu = new FFT_UTOFU_BG(lmp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -69,6 +404,20 @@ void PPPMDPLR::init()
   PPPM::init();
   init_heffte_fft();
   init_node_fft();
+
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  utils::logmesg(lmp, "[INFO] finish init_node_fft \n");
+
+  if(comm->numa_id == NUMA_NUM - 1) {
+    fft_utofu->init(nx_pppm, ny_pppm, nz_pppm,
+      nxlo_node_in, nylo_node_in, nzlo_node_in, nxhi_node_in, nyhi_node_in, nzhi_node_in);
+
+    utils::logmesg(lmp, "[INFO] finish fft_utofu->init \n");
+    
+    fft_utofu->init_utofu_bg();
+    utils::logmesg(lmp, "[INFO] finish fft_utofu->init_utofu_bg \n");
+  }
 }
 
 void PPPMDPLR::init_heffte_fft() {
@@ -86,7 +435,6 @@ void PPPMDPLR::init_heffte_fft() {
 }
 
 void PPPMDPLR::init_node_fft() {
-
   MPI_Allreduce(&nxlo_out, &nxlo_node_out, 1, MPI_INT, MPI_MIN, comm->node_comm);
   MPI_Allreduce(&nxhi_out, &nxhi_node_out, 1, MPI_INT, MPI_MAX, comm->node_comm);
   MPI_Allreduce(&nylo_out, &nylo_node_out, 1, MPI_INT, MPI_MIN, comm->node_comm);
@@ -193,12 +541,12 @@ void PPPMDPLR::init_node_fft() {
               lcl_fft_prd_out[0], lcl_fft_prd_out[1], lcl_fft_prd_out[2], lcl_fft_prd_out[3], lcl_fft_prd_out[4], lcl_fft_prd_out[5]);
     for(int iswap = 0; iswap < 26; iswap++) {
       int sendnode = swap[iswap].sendproc / NUMA_NUM;
-      int nei_prd_in[6] = { neigh_fft_prd_in[sendnode][0] - neipbc[iswap][2] * nx_pppm, 
-                            neigh_fft_prd_in[sendnode][1] - neipbc[iswap][2] * nx_pppm, 
+      int nei_prd_in[6] = { neigh_fft_prd_in[sendnode][0] - neipbc[iswap][0] * nx_pppm, 
+                            neigh_fft_prd_in[sendnode][1] - neipbc[iswap][0] * nx_pppm, 
                             neigh_fft_prd_in[sendnode][2] - neipbc[iswap][1] * ny_pppm, 
                             neigh_fft_prd_in[sendnode][3] - neipbc[iswap][1] * ny_pppm, 
-                            neigh_fft_prd_in[sendnode][4] - neipbc[iswap][0] * nz_pppm, 
-                            neigh_fft_prd_in[sendnode][5] - neipbc[iswap][0] * nz_pppm
+                            neigh_fft_prd_in[sendnode][4] - neipbc[iswap][2] * nz_pppm, 
+                            neigh_fft_prd_in[sendnode][5] - neipbc[iswap][2] * nz_pppm
                           };
       double x_min_pack = std::max(lcl_fft_prd_out[0], nei_prd_in[0]);
       double x_max_pack = std::min(lcl_fft_prd_out[1], nei_prd_in[1]);
@@ -227,7 +575,7 @@ void PPPMDPLR::init_node_fft() {
             swap[iswap].packlist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
       
       swap[iswap].npack    = n;
-      swap[iswap].send_buf = new FFT_SCALAR[n];
+      swap[iswap].send_buf = new FFT_SCALAR[n*3];
 
       utils::logmesg(lmp, "[INFO] PPPM iswap prd in    {} {}   {}-{} {}-{} {}-{} npack {}\n", 
               iswap, swap[iswap].sendproc, nei_prd_in[0], nei_prd_in[1], nei_prd_in[2], nei_prd_in[3], nei_prd_in[4], nei_prd_in[5], n);
@@ -244,12 +592,12 @@ void PPPMDPLR::init_node_fft() {
       int rswap = (iswap % 2 == 0) ? iswap + 1 : iswap - 1;
 
       int recvnode = swap[iswap].recvproc / NUMA_NUM;
-      int nei_prd_out[6] = {neigh_fft_prd_out[recvnode][0] - neipbc[rswap][2] * nx_pppm, 
-                            neigh_fft_prd_out[recvnode][1] - neipbc[rswap][2] * nx_pppm, 
+      int nei_prd_out[6] = {neigh_fft_prd_out[recvnode][0] - neipbc[rswap][0] * nx_pppm, 
+                            neigh_fft_prd_out[recvnode][1] - neipbc[rswap][0] * nx_pppm, 
                             neigh_fft_prd_out[recvnode][2] - neipbc[rswap][1] * ny_pppm, 
                             neigh_fft_prd_out[recvnode][3] - neipbc[rswap][1] * ny_pppm, 
-                            neigh_fft_prd_out[recvnode][4] - neipbc[rswap][0] * nz_pppm, 
-                            neigh_fft_prd_out[recvnode][5] - neipbc[rswap][0] * nz_pppm
+                            neigh_fft_prd_out[recvnode][4] - neipbc[rswap][2] * nz_pppm, 
+                            neigh_fft_prd_out[recvnode][5] - neipbc[rswap][2] * nz_pppm
                           };
       double x_min_unpack = std::max(lcl_fft_prd_in[0], nei_prd_out[0]);
       double x_max_unpack = std::min(lcl_fft_prd_in[1], nei_prd_out[1]);
@@ -277,17 +625,36 @@ void PPPMDPLR::init_node_fft() {
             swap[iswap].unpacklist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
       
       swap[iswap].nunpack    = n;
-      swap[iswap].recv_buf   = new FFT_SCALAR[n];
+      swap[iswap].recv_buf   = new FFT_SCALAR[n*3];
 
       utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
         iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], n);
     }
   }
 
+  // int _max_buf_size = 0;
+  // for(int iswap = 0; iswap < 26; iswap++) {
+  //   if(_max_buf_size < swap[iswap].npack)   _max_buf_size = swap[iswap].npack;
+  //   if(_max_buf_size < swap[iswap].nunpack) _max_buf_size = swap[iswap].nunpack;
+  // }
+  // for(int iswap = 0; iswap < 26; iswap++) {
+  //   swap[iswap].send_buf = new FFT_SCALAR[3*_max_buf_size];
+  //   swap[iswap].recv_buf = new FFT_SCALAR[3*_max_buf_size];
+  // }
+
   // for(int iswap = 0; iswap < nswap; iswap++) {
   //   utils::logmesg(lmp, "[INFO] iswap {} sendproc {} npack {}  recvproc {} nunpack {} \n", iswap, 
   //     swap[iswap].sendproc, swap[iswap].npack, swap[iswap].recvproc, swap[iswap].nunpack);
   // }
+  memory->create(work1_node, nfft_node_brick * 2, "PPPM::work1_node");
+  memory->create(work2_node, nfft_node_brick * 2, "PPPM::work2_node");
+
+  memory->create3d_offset(vdx_node,nzlo_node_out,nzhi_node_out,nylo_node_out,nyhi_node_out,
+    nxlo_node_out,nxhi_node_out,"pppm:vdx_node");
+  memory->create3d_offset(vdy_node,nzlo_node_out,nzhi_node_out,nylo_node_out,nyhi_node_out,
+    nxlo_node_out,nxhi_node_out,"pppm:vdy_node");
+  memory->create3d_offset(vdz_node,nzlo_node_out,nzhi_node_out,nylo_node_out,nyhi_node_out,
+    nxlo_node_out,nxhi_node_out,"pppm:vdz_node");
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -354,7 +721,6 @@ void PPPMDPLR::compute(int eflag, int vflag)
   // }
 
   utils::logmesg(lmp,"[INFO] finish q_node create {} \n", nmax); MPI_Barrier(MPI_COMM_WORLD);
-
 
   nlocal_node = 0;
   MPI_Allgather(&atom->nlocal,1,MPI_INT,nlocal_nodes,1,MPI_INT,comm->node_comm);
@@ -546,6 +912,58 @@ void PPPMDPLR::reverse_node(){
   }
 }
 
+void PPPMDPLR::forward_node(){
+
+  if(comm->numa_id == NUMA_NUM - 1) {
+    MPI_Request *send_requests = new MPI_Request[nswap];
+    MPI_Request *recv_requests = new MPI_Request[nswap];
+    
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto recv_buf = swap[iswap].recv_buf;
+      auto nunpack = swap[iswap].npack;
+      auto recvproc = swap[iswap].recvproc;
+      MPI_Irecv(recv_buf, 3 * nunpack, MPI_DOUBLE, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
+    }
+  
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto send_buf = swap[iswap].send_buf;
+      auto list = swap[iswap].unpacklist;
+      auto npack = swap[iswap].nunpack;
+      auto sendproc = swap[iswap].sendproc;
+  
+      int n = 0;
+      FFT_SCALAR *xsrc = &vdx_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      FFT_SCALAR *ysrc = &vdy_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      FFT_SCALAR *zsrc = &vdz_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      for (int i = 0; i < npack; i++){
+        send_buf[n++] = xsrc[list[i]];
+        send_buf[n++] = ysrc[list[i]];
+        send_buf[n++] = zsrc[list[i]];
+      }
+      MPI_Isend(send_buf, 3 * npack, MPI_DOUBLE, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
+    }
+  
+    MPI_Waitall(26, send_requests, MPI_STATUS_IGNORE);
+    MPI_Waitall(26, recv_requests, MPI_STATUS_IGNORE);
+  
+    for(int iswap = 0; iswap < nswap; iswap++) {
+      auto recv_buf = swap[iswap].recv_buf;
+      auto nunpack = swap[iswap].npack;
+      auto list = swap[iswap].packlist;
+      FFT_SCALAR *xsrc = &vdx_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      FFT_SCALAR *ysrc = &vdy_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      FFT_SCALAR *zsrc = &vdz_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
+      int n = 0;
+      for (int i = 0; i < nunpack; i++) {
+        xsrc[list[i]] += recv_buf[n++];
+        ysrc[list[i]] += recv_buf[n++];
+        zsrc[list[i]] += recv_buf[n++];
+      }
+    }
+    utils::logmesg(lmp, "[INFO] PPPM finish forward_node \n");
+  }
+}
+
 
 
 #ifdef SELF_HEFFTE
@@ -557,230 +975,192 @@ void PPPMDPLR::poisson_ik()
 {
   if(comm->fft_type_flag == 0) PPPM::poisson_ik();
   else if(comm->fft_type_flag == 1) poisson_ik_heffte();
-  // int i,j,k,n;
-  // double eng;
-  // int _nfft;
-  // int xlo, xhi, ylo, yhi, zlo, zhi;
 
-  // if(comm->fft_type_flag == 0) {
-  //   xlo = nxlo_fft; xhi = nxhi_fft; ylo = nylo_fft; yhi = nyhi_fft; zlo = nzlo_fft; zhi = nzhi_fft; 
-  //   _nfft = nfft;
-  // } else {
-  //   xlo = nxlo_in; xhi = nxhi_in; ylo = nylo_in; yhi = nyhi_in; zlo = nzlo_in; zhi = nzhi_in; 
-  //   _nfft = nfft_brick;
-  // }
-
-  // // transform charge density (r -> k)
-
-  // n = 0;
-
-  // if(comm->fft_type_flag == 0) {
-  //   for (i = 0; i < _nfft; i++) {
-  //     work1[n++] = density_fft[i];
-  //     work1[n++] = ZEROF;
-  //   }
-  //   fft1->compute(work1,work1,FFT3d::FORWARD);
-
-  // } if(comm->fft_type_flag == 1) {
-  //   for (int i = 0; i < _nfft; i++) {
-  //     heffte_indata[i].real(density_fft[i]);
-  //     heffte_indata[i].imag(ZEROF);
-  //   }
-
-  //   run_forward();
-  //   n = 0;
-  //   for (int i = 0; i < _nfft; i++) {
-  //     work1[n++] = heffte_outdata[i].real();
-  //     work1[n++] = heffte_outdata[i].imag();
-  //   }
-  // }
-
-  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, _nfft*2, 1 );
-  
-
-  // // global energy and virial contribution
-
-  // double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
-  // double s2 = scaleinv*scaleinv;
-
-  // if (eflag_global || vflag_global) {
-  //   if (vflag_global) {
-  //     n = 0;
-  //     for (i = 0; i < _nfft; i++) {
-  //       eng = s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
-  //       for (j = 0; j < 6; j++) virial[j] += eng*vg[i][j];
-  //       if (eflag_global) energy += eng;
-  //       n += 2;
-  //     }
-  //   } else {
-  //     n = 0;
-  //     for (i = 0; i < _nfft; i++) {
-  //       energy +=
-  //         s2 * greensfn[i] * (work1[n]*work1[n] + work1[n+1]*work1[n+1]);
-  //       n += 2;
-  //     }
-  //   }
-  // }
-
-  // // scale by 1/total-grid-pts to get rho(k)
-  // // multiply by Green's function to get V(k)
-
-  // n = 0;
-  // for (i = 0; i < _nfft; i++) {
-  //   work1[n++] *= scaleinv * greensfn[i];
-  //   work1[n++] *= scaleinv * greensfn[i];
-  // }
-
-  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, _nfft*2, 1 );
-
-
-  // // extra FFTs for per-atom energy/virial
-
-  // if (evflag_atom) poisson_peratom();
-
-  // // triclinic system
-
-  // if (triclinic) {
-  //   poisson_ik_triclinic();
-  //   return;
-  // }
-
-  // // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
-  // // FFT leaves data in 3d brick decomposition
-  // // copy it into inner portion of vdx,vdy,vdz arrays
-
-  // // x direction gradient
-
-  
-  // if(comm->fft_type_flag == 0) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         work2[n] = -fkx[i]*work1[n+1];
-  //         work2[n+1] = fkx[i]*work1[n];
-  //         n += 2;
-  //       }
-  
-  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
-
-  // } if(comm->fft_type_flag == 1) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         heffte_indata[n].real(-fkx[i]*work1[2*n+1]);
-  //         heffte_indata[n].imag(fkx[i] *work1[2*n]);
-  //         n += 1;
-  //       }
-
-  //   run_backward();
-  //   n = 0;
-  //   for (int i = 0; i < _nfft; i++) {
-  //     work2[n++] = heffte_outdata[i].real();
-  //     work2[n++] = heffte_outdata[i].imag();
-  //   }
-  // }
-
-  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, _nfft*2, 1 );
-
-  // n = 0;
-  // for (k = nzlo_in; k <= nzhi_in; k++)
-  //   for (j = nylo_in; j <= nyhi_in; j++)
-  //     for (i = nxlo_in; i <= nxhi_in; i++) {
-  //       vdx_brick[k][j][i] = work2[n];
-  //       n += 2;
-  //     }
-
-  // // y direction gradient
-
-  // if(comm->fft_type_flag == 0) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         work2[n] = -fky[j]*work1[n+1];
-  //         work2[n+1] = fky[j]*work1[n];
-  //         n += 2;
-  //       }
-  
-  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
-
-  // } if(comm->fft_type_flag == 1) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         heffte_indata[n].real(-fky[j]*work1[2*n+1]);
-  //         heffte_indata[n].imag(fky[j] *work1[2*n]);
-  //         n += 1;
-  //       }
-
-  //   run_backward();
-  //   n = 0;
-  //   for (int i = 0; i < _nfft; i++) {
-  //     work2[n++] = heffte_outdata[i].real();
-  //     work2[n++] = heffte_outdata[i].imag();
-  //   }
-  // }
-
-  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, _nfft*2, 1 );
-
-  
-
-  // n = 0;
-  // for (k = nzlo_in; k <= nzhi_in; k++)
-  //   for (j = nylo_in; j <= nyhi_in; j++)
-  //     for (i = nxlo_in; i <= nxhi_in; i++) {
-  //       vdy_brick[k][j][i] = work2[n];
-  //       n += 2;
-  //     }
-
-  // // z direction gradient
-
-  // if(comm->fft_type_flag == 0) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         work2[n] = -fkz[k]*work1[n+1];
-  //         work2[n+1] = fkz[k]*work1[n];
-  //         n += 2;
-  //       }
-  
-  //   fft2->compute(work2,work2,FFT3d::BACKWARD);
-
-  // } if(comm->fft_type_flag == 1) {
-  //   n = 0;
-  //   for (k = zlo; k <= zhi; k++)
-  //     for (j = ylo; j <= yhi; j++)
-  //       for (i = xlo; i <= xhi; i++) {
-  //         heffte_indata[n].real(-fkz[k]*work1[2*n+1]);
-  //         heffte_indata[n].imag(fkz[k] *work1[2*n]);
-  //         n += 1;
-  //       }
-
-  //   run_backward();
-  //   n = 0;
-  //   for (int i = 0; i < _nfft; i++) {
-  //     work2[n++] = heffte_outdata[i].real();
-  //     work2[n++] = heffte_outdata[i].imag();
-  //   }
-  // }
-
-  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, _nfft*2, 1 );
-
-  // n = 0;
-  // for (k = nzlo_in; k <= nzhi_in; k++)
-  //   for (j = nylo_in; j <= nyhi_in; j++)
-  //     for (i = nxlo_in; i <= nxhi_in; i++) {
-  //       vdz_brick[k][j][i] = work2[n];
-  //       n += 2;
-  //     }
+  if(comm->numa_id == NUMA_NUM - 1) 
+    poisson_ik_utofubg();
 }
 
 void PPPMDPLR::poisson_ik_utofubg() {
 
+  int i,j,k,n;
+  double eng;
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  xlo = nxlo_node_in; xhi = nxhi_node_in; ylo = nylo_node_in; yhi = nyhi_node_in; zlo = nzlo_node_in; zhi = nzhi_node_in; 
+
+  // transform charge density (r -> k)
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR density_fft_node \n"),density_fft_node, nfft_node_brick, 1 );
+
+  FFT_SCALAR *work1_node_real = work1_node;
+  FFT_SCALAR *work1_node_imag = work1_node+nfft_node_brick;
+  
+  n = 0;
+  for (i = 0; i < nfft_node_brick; i++) {
+    work1_node_real[i] = density_fft_node[i];
+    work1_node_imag[i] = ZEROF;
+  }
+
+  fft_utofu->compute_fft3D_forward(work1_node, 0);
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, nfft_node_brick*2, 1 );
+
+  std::string tmp;
+  tmp = fmt::format("[INFO] PPPMDPLR work1_node \n");
+  for(int i = 0; i < nfft_node_brick ;i += 1) {
+     tmp += fmt::format("  {}:{:<3.9f} {}:{:<3.9f}", 2*i, work1_node_real[i], 2*i+1, work1_node_imag[i]);
+     if(i != 0 && (i % 50 == 0)) tmp += "\n      ";
+  }
+  tmp += "\n";
+  utils::logmesg(lmp, tmp);
+  
+
+  // global energy and virial contribution
+
+  double scaleinv = 1.0/(nx_pppm*ny_pppm*nz_pppm);
+  double s2 = scaleinv*scaleinv;
+
+  
+  if (eflag_global || vflag_global) {
+    if (vflag_global) {
+      n = 0;
+      for (i = 0; i < nfft_node_brick; i++) {
+        eng = s2 * greensfn_node[i] * (work1_node_real[n]*work1_node_real[n] + work1_node_imag[n]*work1_node_imag[n]);
+        for (j = 0; j < 6; j++) virial[j] += eng*vg_node[i][j];
+        if (eflag_global) energy += eng;
+        n += 1;
+      }
+    } else {
+      n = 0;
+      for (i = 0; i < nfft_node_brick; i++) {
+        energy +=
+          s2 * greensfn_node[i] * (work1_node_real[n]*work1_node_real[n] + work1_node_imag[n]*work1_node_imag[n]);
+        n += 1;
+      }
+    }
+  }
+
+  // scale by 1/total-grid-pts to get rho(k)
+  // multiply by Green's function to get V(k)
+
+  n = 0;
+  for (i = 0; i < nfft_node_brick; i++) {
+    work1_node_real[i] *= scaleinv * greensfn_node[i];
+    work1_node_imag[i] *= scaleinv * greensfn_node[i];
+  }
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom),work1, nfft_brick*2, 1 );
+  tmp = fmt::format("PPPMDPLR work1 greensfn evflag_atom {} \n", evflag_atom);
+  for(int i = 0; i < nfft_node_brick ;i += 1) {
+     tmp += fmt::format("  {}:{:<3.9f} {}:{:<3.9f}", 2*i, work1_node_real[i], 2*i+1, work1_node_imag[i]);
+     if(i != 0 && (i % 50 == 0)) tmp += "\n      ";
+  }
+  tmp += "\n";
+  utils::logmesg(lmp, tmp);
+
+
+  // extra FFTs for per-atom energy/virial
+
+  if (evflag_atom) poisson_peratom();
+
+  // triclinic system
+
+  if (triclinic) {
+    poisson_ik_triclinic();
+    return;
+  }
+
+  // compute gradients of V(r) in each of 3 dims by transforming ik*V(k)
+  // FFT leaves data in 3d brick decomposition
+  // copy it into inner portion of vdx,vdy,vdz arrays
+
+  // x direction gradient
+
+  FFT_SCALAR *work2_node_real = work2_node;
+  FFT_SCALAR *work2_node_imag = work2_node+nfft_node_brick;
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        work2_node_real[n] = -fkx_node[i]*work1_node_imag[n];
+        work2_node_imag[n] = fkx_node[i] *work1_node_real[n];
+        n += 1;
+      }
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back input \n"),work2_node_real, nfft_node_brick*2, 1 );
+
+
+  fft_utofu->compute_fft3D_forward(work2_node, 1);
+
+  // n = 0;
+  // for (int i = 0; i < nfft_brick; i++) {
+  //   work2[n++] = heffte_outdata[i].real();
+  //   work2[n++] = heffte_outdata[i].imag();
+  // }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2_node, nfft_node_brick, 1 );
+
+  
+  n = 0;
+  for (k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        vdx_node[k][j][i] = work2_node_real[n];
+        n += 1;
+      }
+
+  // y direction gradient
+
+  
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        work2_node_real[n] = -fky_node[j]*work1_node_imag[n];
+        work2_node_imag[n] = fky_node[j] *work1_node_real[n];
+        n += 1;
+      }
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back input \n"),work2_node_real, nfft_node_brick*2, 1 );
+
+
+  fft_utofu->compute_fft3D_forward(work2_node, 1);
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back output \n"),work2_node, nfft_node_brick*2, 1 );
+
+  n = 0;
+  for (k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        vdy_node[k][j][i] = work2_node_real[n];
+        n += 1;
+      }
+
+
+
+  // z direction gradient
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++)
+    for (j = ylo; j <= yhi; j++)
+      for (i = xlo; i <= xhi; i++) {
+        work2_node_real[n] = -fkz_node[k]*work1_node_imag[n];
+        work2_node_imag[n] = fkz_node[k] *work1_node_real[n];
+        n += 1;
+      }
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back input \n"),work2_node_real, nfft_node_brick*2, 1 );
+
+
+  fft_utofu->compute_fft3D_forward(work2_node, 1);
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back output \n"),work2_node, nfft_node_brick*2, 1 );
+
+  n = 0;
+  for (k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        vdz_node[k][j][i] = work2_node_real[n];
+        n += 1;
+      }
 }
 
 void PPPMDPLR::poisson_ik_heffte()
@@ -809,6 +1189,78 @@ void PPPMDPLR::poisson_ik_heffte()
     work1[n++] = heffte_outdata[i].imag();
   }
 
+  
+  // std::vector<FFT_SCALAR> in_data(nfft_brick);
+  // std::vector<FFT_SCALAR> recv_data(nfft_brick * comm->nprocs);
+  // std::vector<FFT_SCALAR> all_data(nfft_brick * comm->nprocs);
+
+  // for (int i = 0; i < nfft_brick; i++) {
+  //   in_data[i] = heffte_outdata[i].real();
+  // }
+
+  // int lcl_size[3], fft_size[3];
+  // lcl_size[0] = nxhi_in - nxlo_in + 1;
+  // lcl_size[1] = nyhi_in - nylo_in + 1;
+  // lcl_size[2] = nzhi_in - nzlo_in + 1;
+  // fft_size[0] = nx_pppm;
+  // fft_size[1] = ny_pppm;
+  // fft_size[2] = nz_pppm; 
+
+  // // MPI_Gather(in_data.data(), nfft_brick, MPI_DOUBLE, recv_data.data(), nfft_brick, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  // n = -1;
+  // for (int pzIdx = 0; pzIdx < comm->procgrid[2]; ++pzIdx) {
+  //   for (int pyIdx = 0; pyIdx < comm->procgrid[1]; ++pyIdx) {
+  //     for (int pxIdx = 0; pxIdx < comm->procgrid[0]; ++pxIdx) {
+  //       n++;
+  //       // int procRank = pzIdx * (comm->procgrid[1] * comm->procgrid[0]) + pyIdx * comm->procgrid[0] + pxIdx;
+  //       int procid = comm->grid2proc[pxIdx][pyIdx][pzIdx];
+  //       if(procid == 0) {
+  //         memcpy(recv_data.data(), in_data.data(), nfft_brick*sizeof(double));
+  //         continue;
+  //       }
+
+  //       if(comm->me == procid) {
+  //         MPI_Send(in_data.data(), nfft_brick, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+  //       }
+  //       if(comm->me == 0) {
+  //         MPI_Recv(recv_data.data()+n*nfft_brick, nfft_brick, MPI_DOUBLE, procid, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  //       }
+  //     }
+  //   }
+  // }
+
+  // for (int pzIdx = 0; pzIdx < comm->procgrid[2]; ++pzIdx) {
+  //   for (int pyIdx = 0; pyIdx < comm->procgrid[1]; ++pyIdx) {
+  //     for (int pxIdx = 0; pxIdx < comm->procgrid[0]; ++pxIdx) {
+  //           int procRank = pzIdx * (comm->procgrid[1] * comm->procgrid[0]) + pyIdx * comm->procgrid[0] + pxIdx;
+  //           int baseX = pxIdx * lcl_size[0];
+  //           int baseY = pyIdx * lcl_size[1];
+  //           int baseZ = pzIdx * lcl_size[2];
+  //           int offset = nfft_brick * procRank;
+
+  //           // 重新映射到全局网格
+  //           for (int k = 0; k < lcl_size[2]; ++k) {
+  //             for (int j = 0; j < lcl_size[1]; ++j) {
+  //               for (int i = 0; i < lcl_size[0]; ++i) {
+  //                     int ptr = (baseZ + k) * fft_size[1] * fft_size[0] + (baseY + j) * fft_size[0] + (baseX + i);
+  //                     all_data[ptr]  = recv_data[offset++];
+  //                   }
+  //               }
+  //           }
+  //       }
+  //   }
+  // }
+
+  // std::string tmp;
+  // tmp += fmt::format("[INFO] poisson_ik_heffte all_data \n");
+  // tmp += "{";
+  // for(int i = 0; i < nx_pppm * ny_pppm * nz_pppm ;i += 1) {
+  //    tmp += fmt::format(" {:<13.9f},", all_data[i]);
+  // }
+  // tmp += "}\n";
+  // utils::logmesg(lmp, tmp);
+
+  // if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR all_data \n"),all_data.data(), nfft_brick*2, 1 );
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR work1 \n"),work1, nfft_brick*2, 1 );
   
 
@@ -881,7 +1333,7 @@ void PPPMDPLR::poisson_ik_heffte()
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, nfft_brick*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 0 back output \n"),work2, nfft_brick*2, 2 );
 
   n = 0;
   for (k = nzlo_in; k <= nzhi_in; k++)
@@ -910,7 +1362,7 @@ void PPPMDPLR::poisson_ik_heffte()
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, nfft_brick*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 1 back \n"),work2, nfft_brick*2, 2 );
 
   
 
@@ -940,7 +1392,7 @@ void PPPMDPLR::poisson_ik_heffte()
     work2[n++] = heffte_outdata[i].imag();
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, nfft_brick*2, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("PPPMDPLR 2 back \n"),work2, nfft_brick*2, 2 );
 
   n = 0;
   for (k = nzlo_in; k <= nzhi_in; k++)
@@ -1099,7 +1551,7 @@ void PPPMDPLR::brick2fft()
       }
 
 
-  utils::logmesg_arry(lmp, "[INFO] desity_fft", density_fft, n, 1);
+  utils::logmesg_arry(lmp, fmt::format("[INFO] density_fft n {}", n), density_fft, n, 1);
   if(comm->numa_id == NUMA_NUM - 1) {
     n = 0;
     for (iz = nzlo_node_in; iz <= nzhi_node_in; iz++)
@@ -1107,18 +1559,15 @@ void PPPMDPLR::brick2fft()
         for (ix = nxlo_node_in; ix <= nxhi_node_in; ix++)
         density_fft_node[n++] = density_brick_node[iz][iy][ix];
     
-    utils::logmesg_arry(lmp, "[INFO] density_fft_node", density_fft_node, n, 1);
+    utils::logmesg_arry(lmp, fmt::format("[INFO] density_fft_node n {}", n), density_fft_node, n, 1);
   }
-
-
 
   if(comm->fft_type_flag == 0) {
     remap->perform(density_fft,density_fft,work1);
   } 
 }
 
-void PPPMDPLR::compute_gf_ik()
-{
+void PPPMDPLR::compute_gf_ik_brick() {
 
   memory->create(greensfn_brick,nfft_both,"pppm:greensfn_brick");
 
@@ -1203,23 +1652,105 @@ void PPPMDPLR::compute_gf_ik()
   }
 }
 
+void PPPMDPLR::compute_gf_ik_node() {
+
+  memory->create(greensfn_node,nfft_node_brick,"pppm:nfft_node_brick");
+
+  const double * const prd = domain->prd;
+
+  const double xprd = prd[0];
+  const double yprd = prd[1];
+  const double zprd = prd[2];
+  const double zprd_slab = zprd*slab_volfactor;
+  const double unitkx = (MY_2PI/xprd);
+  const double unitky = (MY_2PI/yprd);
+  const double unitkz = (MY_2PI/zprd_slab);
+
+  double snx,sny,snz;
+  double argx,argy,argz,wx,wy,wz,sx,sy,sz,qx,qy,qz;
+  double sum1,dot1,dot2;
+  double numerator,denominator;
+  double sqk;
+
+  int k,l,m,n,nx,ny,nz,kper,lper,mper;
+
+  const int nbx = static_cast<int> ((g_ewald*xprd/(MY_PI*nx_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int nby = static_cast<int> ((g_ewald*yprd/(MY_PI*ny_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int nbz = static_cast<int> ((g_ewald*zprd_slab/(MY_PI*nz_pppm)) *
+                                    pow(-log(EPS_HOC),0.25));
+  const int twoorder = 2*order;
+
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  xlo = nxlo_node_in; xhi = nxhi_node_in; ylo = nylo_node_in; yhi = nyhi_node_in; zlo = nzlo_node_in; zhi = nzhi_node_in; 
+  
+  n = 0;
+  for (m = zlo; m <= zhi; m++) {
+    mper = m - nz_pppm*(2*m/nz_pppm);
+    snz = square(sin(0.5*unitkz*mper*zprd_slab/nz_pppm));
+
+    for (l = ylo; l <= yhi; l++) {
+      lper = l - ny_pppm*(2*l/ny_pppm);
+      sny = square(sin(0.5*unitky*lper*yprd/ny_pppm));
+
+      for (k = xlo; k <= xhi; k++) {
+        kper = k - nx_pppm*(2*k/nx_pppm);
+        snx = square(sin(0.5*unitkx*kper*xprd/nx_pppm));
+
+        sqk = square(unitkx*kper) + square(unitky*lper) + square(unitkz*mper);
+
+        if (sqk != 0.0) {
+          numerator = 12.5663706/sqk;
+          denominator = gf_denom(snx,sny,snz);
+          sum1 = 0.0;
+
+          for (nx = -nbx; nx <= nbx; nx++) {
+            qx = unitkx*(kper+nx_pppm*nx);
+            sx = exp(-0.25*square(qx/g_ewald));
+            argx = 0.5*qx*xprd/nx_pppm;
+            wx = powsinxx(argx,twoorder);
+
+            for (ny = -nby; ny <= nby; ny++) {
+              qy = unitky*(lper+ny_pppm*ny);
+              sy = exp(-0.25*square(qy/g_ewald));
+              argy = 0.5*qy*yprd/ny_pppm;
+              wy = powsinxx(argy,twoorder);
+
+              for (nz = -nbz; nz <= nbz; nz++) {
+                qz = unitkz*(mper+nz_pppm*nz);
+                sz = exp(-0.25*square(qz/g_ewald));
+                argz = 0.5*qz*zprd_slab/nz_pppm;
+                wz = powsinxx(argz,twoorder);
+
+                dot1 = unitkx*kper*qx + unitky*lper*qy + unitkz*mper*qz;
+                dot2 = qx*qx+qy*qy+qz*qz;
+                sum1 += (dot1/dot2) * sx*sy*sz * wx*wy*wz;
+              }
+            }
+          }
+          greensfn_node[n++] = numerator*sum1/denominator;
+        } else greensfn_node[n++] = 0.0;
+      }
+    }
+  }
+}
+
 
 void PPPMDPLR::setup()
 {
-
   PPPM::setup();
-
-  if (triclinic) {
-    setup_triclinic();
-    return;
-  }
-
+  setup_brick();
+  setup_node();
+}
+void PPPMDPLR::setup_brick()
+{
   memory->create1d_offset(fkx_brick,nxlo_in,nxhi_in,"pppm:fkx_brick");
   memory->create1d_offset(fky_brick,nylo_in,nyhi_in,"pppm:fky_brick");
   memory->create1d_offset(fkz_brick,nzlo_in,nzhi_in,"pppm:fkz_brick");
 
   memory->create(vg_brick,nfft_both,6,"pppm:vg");
-
 
   // perform some checks to avoid illegal boundaries with read_data
 
@@ -1310,8 +1841,107 @@ void PPPMDPLR::setup()
     }
   }
 
-  if (differentiation_flag == 1) compute_gf_ad();
-  else compute_gf_ik();
+  compute_gf_ik_brick();
+}
+
+void PPPMDPLR::setup_node()
+{
+  memory->create1d_offset(fkx_node,nxlo_node_in,nxhi_node_in,"pppm:fkx_node");
+  memory->create1d_offset(fky_node,nylo_node_in,nyhi_node_in,"pppm:fky_node");
+  memory->create1d_offset(fkz_node,nzlo_node_in,nzhi_node_in,"pppm:fkz_node");
+
+  memory->create(vg_node,nfft_node_brick, 6,"pppm:vg_node");
+
+  // perform some checks to avoid illegal boundaries with read_data
+
+  if (slabflag == 0 && domain->nonperiodic > 0)
+    error->all(FLERR,"Cannot use non-periodic boundaries with PPPM");
+  if (slabflag) {
+    if (domain->xperiodic != 1 || domain->yperiodic != 1 ||
+        domain->boundary[2][0] != 1 || domain->boundary[2][1] != 1)
+      error->all(FLERR,"Incorrect boundaries with slab PPPM");
+  }
+
+  int i,j,k,n;
+  double *prd;
+
+  // volume-dependent factors
+  // adjust z dimension for 2d slab PPPM
+  // z dimension for 3d PPPM is zprd since slab_volfactor = 1.0
+
+  if (triclinic == 0) prd = domain->prd;
+  else prd = domain->prd_lamda;
+
+  double xprd = prd[0];
+  double yprd = prd[1];
+  double zprd = prd[2];
+  double zprd_slab = zprd*slab_volfactor;
+  volume = xprd * yprd * zprd_slab;
+
+  delxinv = nx_pppm/xprd;
+  delyinv = ny_pppm/yprd;
+  delzinv = nz_pppm/zprd_slab;
+
+  delvolinv = delxinv*delyinv*delzinv;
+
+  double unitkx = (MY_2PI/xprd);
+  double unitky = (MY_2PI/yprd);
+  double unitkz = (MY_2PI/zprd_slab);
+
+  // fkx,fky,fkz for my FFT grid pts
+
+  double per;
+
+  int xlo, xhi, ylo, yhi, zlo, zhi;
+
+  xlo = nxlo_node_in; xhi = nxhi_node_in; ylo = nylo_node_in; yhi = nyhi_node_in; zlo = nzlo_node_in; zhi = nzhi_node_in; 
+
+  for (i = xlo; i <= xhi; i++) {
+    per = i - nx_pppm*(2*i/nx_pppm);
+    fkx_node[i] = unitkx*per;
+  }
+
+  for (i = ylo; i <= yhi; i++) {
+    per = i - ny_pppm*(2*i/ny_pppm);
+    fky_node[i] = unitky*per;
+  }
+
+  for (i = zlo; i <= zhi; i++) {
+    per = i - nz_pppm*(2*i/nz_pppm);
+    fkz_node[i] = unitkz*per;
+  }
+
+  // virial coefficients
+
+  double sqk,vterm;
+
+  n = 0;
+  for (k = zlo; k <= zhi; k++) {
+    for (j = ylo; j <= yhi; j++) {
+      for (i = xlo; i <= xhi; i++) {
+        sqk = fkx_node[i]*fkx_node[i] + fky_node[j]*fky_node[j] + fkz_node[k]*fkz_node[k];
+        if (sqk == 0.0) {
+          vg_node[n][0] = 0.0;
+          vg_node[n][1] = 0.0;
+          vg_node[n][2] = 0.0;
+          vg_node[n][3] = 0.0;
+          vg_node[n][4] = 0.0;
+          vg_node[n][5] = 0.0;
+        } else {
+          vterm = -2.0 * (1.0/sqk + 0.25/(g_ewald*g_ewald));
+          vg_node[n][0] = 1.0 + vterm*fkx_node[i]*fkx_node[i];
+          vg_node[n][1] = 1.0 + vterm*fky_node[j]*fky_node[j];
+          vg_node[n][2] = 1.0 + vterm*fkz_node[k]*fkz_node[k];
+          vg_node[n][3] = vterm*fkx_node[i]*fky_node[j];
+          vg_node[n][4] = vterm*fkx_node[i]*fkz_node[k];
+          vg_node[n][5] = vterm*fky_node[j]*fkz_node[k];
+        }
+        n++;
+      }
+    }
+  }
+
+  compute_gf_ik_node();
 }
 
 #endif

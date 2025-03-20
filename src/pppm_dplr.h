@@ -15,21 +15,59 @@ KSpaceStyle(pppm/dplr,PPPMDPLR)
 
 #define SELF_HEFFTE
 
+
+
 #include "pppm.h"
 #include <iostream>
 #include <vector>
 #include "deepmd_common.h"
 #include <fftw3-mpi.h>
 #include <heffte.h>
+#include <utofu.h>
 
 namespace LAMMPS_NS {
 
-  class PPPMDPLR : public PPPM {
+class FFT_UTOFU_BG : public Pointers{
+public:
+  FFT_UTOFU_BG (LAMMPS *lmp) : Pointers(lmp){};
+  int fft_size[3];
+  int nfft;
+  int nfft_brick;
+  int *nfft_bricks[3];
+  int *nfft_bricks_offset[3];
+  int max_nfft_brick[3];
+  int lcl_size[3];
+  int nblocks[3];
+  int dgemm_size[3];
+  int maxGemmsize;
+  int *nodegrid;
+  int *nodeloc;
+  double *reduce_data;
+  FFT_SCALAR *Wsin[3], *Wcos[3], *Wsin_i[3], *Wcos_i[3];
+  FFT_SCALAR *calcu_buf;
+
+  int rc;
+  utofu_vbg_id_t lcl_vbg_ids[TNI_NUM][MAX_RING][2];
+  utofu_vbg_id_t rmt_vbg_ids[TNI_NUM][MAX_RING][MAX_RING][2];
+  struct utofu_vbg_setting vbg_settings[TNI_NUM][MAX_RING][2];
+
+  void init(int nx_pppm, int ny_pppm, int nz_pppm,
+    int nxlo_in, int nylo_in, int nzlo_in, int nxhi_in, int nyhi_in, int nzhi_in);
+
+  void init_utofu_bg();
+
+  void compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR);
+    
+};
+
+class PPPMDPLR : public PPPM {
 public:
     PPPMDPLR(class LAMMPS *);
     virtual ~PPPMDPLR () {};
     void init() override;
     void setup() override;
+    void setup_brick();
+    void setup_node();
     FPTYPE *fele;
     double **f_lr;
 
@@ -37,6 +75,8 @@ public:
     heffte::fft3d<heffte::backend::fftw> *heffte_wrapper;
     std::complex<FFT_SCALAR> *heffte_indata;
     std::complex<FFT_SCALAR> *heffte_outdata;
+
+    FFT_UTOFU_BG *fft_utofu;
 
     void run_forward() {
       heffte_wrapper->forward(heffte_indata, heffte_outdata);
@@ -57,7 +97,8 @@ protected:
     virtual void particle_map() override;
     virtual void make_rho() override;
     virtual void brick2fft() override;
-    virtual void compute_gf_ik() override;
+    void compute_gf_ik_brick();
+    void compute_gf_ik_node();
     void poisson_ik_heffte();
     void poisson_ik_utofubg();
     void particle_map_node();
@@ -78,7 +119,8 @@ protected:
       FFT_SCALAR *send_buf;
       FFT_SCALAR *recv_buf;
     };
-  
+
+    
     int nswap, maxswap;
     Swap *swap;
     #endif
@@ -92,6 +134,10 @@ private:
     double *fkx_brick, *fky_brick, *fkz_brick;
     double *greensfn_brick;
 
+    double **vg_node;
+    double *fkx_node, *fky_node, *fkz_node;
+    double *greensfn_node;
+
 
     double **x_node;
     double *q_node;
@@ -101,6 +147,8 @@ private:
     FFT_SCALAR ***density_brick_node;
     FFT_SCALAR *work1_node, *work2_node;
     FFT_SCALAR *density_fft_node;
+    FFT_SCALAR ***vdx_node, ***vdy_node, ***vdz_node;
+
 
 
     const int con_direction[62][3] = {
