@@ -69,6 +69,7 @@ public:
     void setup_brick();
     void setup_node();
     FPTYPE *fele;
+    FPTYPE *fele_node;
     double **f_lr;
 
     heffte::box3d<> *box_pos;
@@ -91,7 +92,7 @@ protected:
     virtual void compute(int, int) override;
     virtual void fieldforce_ik() override;
     virtual void fieldforce_ad() override;
-
+    
     #ifdef SELF_HEFFTE
     virtual void poisson_ik() override;
     virtual void particle_map() override;
@@ -102,6 +103,8 @@ protected:
     void poisson_ik_heffte();
     void poisson_ik_utofubg();
     void particle_map_node();
+    void fieldforce_ik_brick();
+    void fieldforce_ik_node();
     void make_rho_node();
     void init_heffte_fft();
     void init_node_fft();

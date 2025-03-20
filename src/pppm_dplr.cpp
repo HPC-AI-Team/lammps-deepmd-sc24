@@ -280,8 +280,8 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
   }
 
 
-  gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
-    in_data, nodegrid, lcl_size, fft_size , fft_size[0], nfft, lmp, "input data" );
+  // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+  //   in_data, nodegrid, lcl_size, fft_size , fft_size[0], nfft, lmp, "input data" );
 
   FFT_SCALAR *cos_out[2], *sin_out[2];
   for(int dir = 0; dir < 3; dir++) {
@@ -319,7 +319,7 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
       sin_out[0][i] += sin_out[1][i];
     }
 
-    utils::logmesg_arry(lmp, fmt::format("PPPMDPLR cos_out dir {} \n", dir),calcu_buf,2*dgemm_size[dir], 1 );
+    // utils::logmesg_arry(lmp, fmt::format("PPPMDPLR cos_out dir {} \n", dir),calcu_buf,2*dgemm_size[dir], 1 );
 
 
     memset(in_data, 0, nfft_brick * sizeof(FFT_SCALAR) *2);
@@ -335,6 +335,8 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
 
     // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
     //   in_data, nodegrid, lcl_size, fft_size ,  fft_size[(dir+1)%3 ] ,nfft, lmp, fmt::format("out dir {}", dir) );
+
+    MPI_Barrier(comm->comm1D[dir]);
     
     for(int itype = 0; itype < 2; itype++) {
       double *_in_buf = in_data + itype * nfft_brick;
@@ -350,21 +352,23 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
           utofu_reduce_double(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_BFPSUM, 
                         &_out_buf[p], size, 0);
         }
-  
+
         for(int r = 0; r < comm->comm1D_size[dir]; r++) {
           int size = nfft_bricks[dir][r] - p;
           if(size <= 0) continue;
           if(size > 2) size = 2;
+          int nerr = 0;
           do {
             rc = utofu_poll_reduce_double(lcl_vbg_ids[dir*2][r][0], 0, &reduce_data[r*2]);
           } while (rc == UTOFU_ERR_NOT_COMPLETED);
           // printf("utofu_reduce_double recv ring %d \n", r); fflush(stdout);
-          assert(rc == UTOFU_SUCCESS);
+          if(rc != UTOFU_SUCCESS) error->one(FLERR,"utofu_poll_reduce_double fail {} ", rc);
+
           if(r == comm->me3d[dir]) {
             for(int i = 0; i < size; i++) _in_buf[p+i] = reduce_data[r*2+i]; 
           };
         }
-        MPI_Barrier(comm->comm1D[dir]);
+        // MPI_Barrier(comm->comm1D[dir]);
       }
     }
     // utils::logmesg_arry(lmp, fmt::format("PPPMDPLR result dir {} \n", dir),in_data,2*nfft_brick, 1 );
@@ -373,8 +377,8 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
 
   gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
     in_data, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir real {}", 0) );
-  gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
-    in_data+nfft_brick, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir imag {}", 0) );
+  // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+  //   in_data+nfft_brick, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir imag {}", 0) );
 }
 
 /* ---------------------------------------------------------------------- */
@@ -474,6 +478,9 @@ void PPPMDPLR::init_node_fft() {
   int neipbc[26][3];
   int neidirec[26][3];
 
+  int _max_buf_size = 0;
+
+
   int iswap = 0;
   nswap = 26; 
   if(comm->numa_id == NUMA_NUM - 1) {
@@ -563,7 +570,7 @@ void PPPMDPLR::init_node_fft() {
       }
 
       swap[iswap].packlist   = new int[ngrid_node];
-      swap[iswap].send_buf   = new FFT_SCALAR[ngrid_node];
+      // swap[iswap].send_buf   = new FFT_SCALAR[ngrid_node];
       
       int n = 0;
       int ix,iy,iz;
@@ -575,7 +582,9 @@ void PPPMDPLR::init_node_fft() {
             swap[iswap].packlist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
       
       swap[iswap].npack    = n;
-      swap[iswap].send_buf = new FFT_SCALAR[n*3];
+
+      if(n > _max_buf_size) _max_buf_size = n;
+      // swap[iswap].send_buf = new FFT_SCALAR[n*3];
 
       utils::logmesg(lmp, "[INFO] PPPM iswap prd in    {} {}   {}-{} {}-{} {}-{} npack {}\n", 
               iswap, swap[iswap].sendproc, nei_prd_in[0], nei_prd_in[1], nei_prd_in[2], nei_prd_in[3], nei_prd_in[4], nei_prd_in[5], n);
@@ -625,22 +634,18 @@ void PPPMDPLR::init_node_fft() {
             swap[iswap].unpacklist[n++] = (iz-nzlo_node_out)*ny*nx + (iy-nylo_node_out)*nx + (ix-nxlo_node_out);
       
       swap[iswap].nunpack    = n;
-      swap[iswap].recv_buf   = new FFT_SCALAR[n*3];
+      if(n > _max_buf_size) _max_buf_size = n;
+      // swap[iswap].recv_buf   = new FFT_SCALAR[n*3];
 
       utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
         iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], n);
     }
   }
 
-  // int _max_buf_size = 0;
-  // for(int iswap = 0; iswap < 26; iswap++) {
-  //   if(_max_buf_size < swap[iswap].npack)   _max_buf_size = swap[iswap].npack;
-  //   if(_max_buf_size < swap[iswap].nunpack) _max_buf_size = swap[iswap].nunpack;
-  // }
-  // for(int iswap = 0; iswap < 26; iswap++) {
-  //   swap[iswap].send_buf = new FFT_SCALAR[3*_max_buf_size];
-  //   swap[iswap].recv_buf = new FFT_SCALAR[3*_max_buf_size];
-  // }
+  for(int iswap = 0; iswap < 26; iswap++) {
+    swap[iswap].send_buf = new FFT_SCALAR[3*_max_buf_size];
+    swap[iswap].recv_buf = new FFT_SCALAR[3*_max_buf_size];
+  }
 
   // for(int iswap = 0; iswap < nswap; iswap++) {
   //   utils::logmesg(lmp, "[INFO] iswap {} sendproc {} npack {}  recvproc {} nunpack {} \n", iswap, 
@@ -794,7 +799,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
   gc->forward_comm(Grid3d::KSPACE, this, FORWARD_IK, 3, sizeof(FFT_SCALAR),
                      gc_buf1, gc_buf2, MPI_FFT_SCALAR);
 
-
+  forward_node();
   // extra per-atom energy/virial communication
 
   if (evflag_atom) {
@@ -804,8 +809,83 @@ void PPPMDPLR::compute(int eflag, int vflag)
   }
 
   // calculate the force on my particles
+  int n; 
+  std::string tmp;
+  n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdz_brick \n");
+  tmp += "{";
+  for (int k = nzlo_in; k <= nzhi_in; k++)
+    for (int j = nylo_in; j <= nyhi_in; j++)
+      for (int i = nxlo_in; i <= nxhi_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdz_brick[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
 
-  fieldforce();
+   n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdz_node \n");
+  tmp += "{";
+  for (int k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (int j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (int i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdz_node[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
+  n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdy_brick \n");
+  tmp += "{";
+  for (int k = nzlo_in; k <= nzhi_in; k++)
+    for (int j = nylo_in; j <= nyhi_in; j++)
+      for (int i = nxlo_in; i <= nxhi_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdy_brick[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
+
+   n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdy_node \n");
+  tmp += "{";
+  for (int k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (int j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (int i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdy_node[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
+  n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdx_brick \n");
+  tmp += "{";
+  for (int k = nzlo_in; k <= nzhi_in; k++)
+    for (int j = nylo_in; j <= nyhi_in; j++)
+      for (int i = nxlo_in; i <= nxhi_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdx_brick[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
+
+   n = 0;
+  tmp = fmt::format("[INFO] poisson_ik vdx_node \n");
+  tmp += "{";
+  for (int k = nzlo_node_in; k <= nzhi_node_in; k++)
+    for (int j = nylo_node_in; j <= nyhi_node_in; j++)
+      for (int i = nxlo_node_in; i <= nxhi_node_in; i++) {
+        tmp += fmt::format(" {:<13.9f},", vdx_node[k][j][i]);
+        n += 1;
+      }
+  tmp += "}\n";
+  utils::logmesg(lmp, tmp);
+
+  fieldforce_ik();
+
+  utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele \n"), fele, atom->nlocal * 3, 1);
+  utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele_node \n"), fele_node, nlocal_node * 3, 1);
+
 
   // extra per-atom energy/virial communication
 
@@ -921,7 +1001,7 @@ void PPPMDPLR::forward_node(){
     for(int iswap = 0; iswap < nswap; iswap++) {
       auto recv_buf = swap[iswap].recv_buf;
       auto nunpack = swap[iswap].npack;
-      auto recvproc = swap[iswap].recvproc;
+      auto recvproc = swap[iswap].sendproc;
       MPI_Irecv(recv_buf, 3 * nunpack, MPI_DOUBLE, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
     }
   
@@ -929,7 +1009,7 @@ void PPPMDPLR::forward_node(){
       auto send_buf = swap[iswap].send_buf;
       auto list = swap[iswap].unpacklist;
       auto npack = swap[iswap].nunpack;
-      auto sendproc = swap[iswap].sendproc;
+      auto sendproc = swap[iswap].recvproc;
   
       int n = 0;
       FFT_SCALAR *xsrc = &vdx_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
@@ -955,9 +1035,9 @@ void PPPMDPLR::forward_node(){
       FFT_SCALAR *zsrc = &vdz_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
       int n = 0;
       for (int i = 0; i < nunpack; i++) {
-        xsrc[list[i]] += recv_buf[n++];
-        ysrc[list[i]] += recv_buf[n++];
-        zsrc[list[i]] += recv_buf[n++];
+        xsrc[list[i]] = recv_buf[n++];
+        ysrc[list[i]] = recv_buf[n++];
+        zsrc[list[i]] = recv_buf[n++];
       }
     }
     utils::logmesg(lmp, "[INFO] PPPM finish forward_node \n");
@@ -1949,7 +2029,15 @@ void PPPMDPLR::setup_node()
    interpolate from grid to get electric field & force on my particles for ik
 ------------------------------------------------------------------------- */
 
-void PPPMDPLR::fieldforce_ik()
+void PPPMDPLR::fieldforce_ik(){
+  if(comm->fft_type_flag < 2) fieldforce_ik_brick();
+  else fieldforce_ik_node();
+
+  if(comm->numa_id == NUMA_NUM - 1) 
+    fieldforce_ik_node();
+
+}
+void PPPMDPLR::fieldforce_ik_brick()
 {
   int i,l,m,n,nx,ny,nz,mx,my,mz;
   FFT_SCALAR dx,dy,dz,x0,y0,z0;
@@ -1963,11 +2051,8 @@ void PPPMDPLR::fieldforce_ik()
 
   double *q = atom->q;
   double **x = atom->x;
-  // double **f = atom->f;
 
   int nlocal = atom->nlocal;
-  int nghost = atom->nghost;
-  int nall = nlocal + nghost;
 
   // fele.resize(nlocal*3);
   // fill(fele.begin(), fele.end(), 0.0);
@@ -2006,6 +2091,55 @@ void PPPMDPLR::fieldforce_ik()
     fele[i*3+0] += qfactor*ekx;
     fele[i*3+1] += qfactor*eky;
     if (slabflag != 2) fele[i*3+2] += qfactor*ekz;
+  }
+}
+void PPPMDPLR::fieldforce_ik_node()
+{
+  int i,l,m,n,nx,ny,nz,mx,my,mz;
+  FFT_SCALAR dx,dy,dz,x0,y0,z0;
+  FFT_SCALAR ekx,eky,ekz;
+
+  // loop over my charges, interpolate electric field from nearby grid points
+  // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
+  // (dx,dy,dz) = distance to "lower left" grid pt
+  // (mx,my,mz) = global coords of moving stencil pt
+  // ek = 3 components of E-field on particle
+
+  memset(fele_node, 0, nlocal_node*3*sizeof(FPTYPE));
+
+  for (i = 0; i < nlocal_node; i++) {
+    nx = part2grid_node[i][0];
+    ny = part2grid_node[i][1];
+    nz = part2grid_node[i][2];
+    dx = nx+shiftone - (x_node[i][0]-boxlo[0])*delxinv;
+    dy = ny+shiftone - (x_node[i][1]-boxlo[1])*delyinv;
+    dz = nz+shiftone - (x_node[i][2]-boxlo[2])*delzinv;
+
+    compute_rho1d(dx,dy,dz);
+
+    ekx = eky = ekz = ZEROF;
+    for (n = nlower; n <= nupper; n++) {
+      mz = n+nz;
+      z0 = rho1d[2][n];
+      for (m = nlower; m <= nupper; m++) {
+        my = m+ny;
+        y0 = z0*rho1d[1][m];
+        for (l = nlower; l <= nupper; l++) {
+          mx = l+nx;
+          x0 = y0*rho1d[0][l];
+          ekx -= x0*vdx_node[mz][my][mx];
+          eky -= x0*vdy_node[mz][my][mx];
+          ekz -= x0*vdz_node[mz][my][mx];
+        }
+      }
+    }
+
+    // convert E-field to force
+
+    const double qfactor = qqrd2e * scale * q_node[i];
+    fele_node[i*3+0] += qfactor*ekx;
+    fele_node[i*3+1] += qfactor*eky;
+    if (slabflag != 2) fele_node[i*3+2] += qfactor*ekz;
   }
 }
 
