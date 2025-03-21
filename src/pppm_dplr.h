@@ -43,6 +43,8 @@ public:
   int *nodegrid;
   int *nodeloc;
   double *reduce_data;
+  double blas_time;
+  double comm_time;
   FFT_SCALAR *Wsin[3], *Wcos[3], *Wsin_i[3], *Wcos_i[3];
   FFT_SCALAR *calcu_buf;
 
@@ -71,19 +73,22 @@ public:
     FPTYPE *fele;
     FPTYPE *fele_node;
     double **f_lr;
+    int FFT_LIB_TYPE;
+    int FFT_NODE_ROOT;
+    int nmax_node;
 
     heffte::box3d<> *box_pos;
     heffte::fft3d<heffte::backend::fftw> *heffte_wrapper;
-    std::complex<FFT_SCALAR> *heffte_indata;
-    std::complex<FFT_SCALAR> *heffte_outdata;
+    std::complex<FFT_SCALAR> *heffte_work1;
+    std::complex<FFT_SCALAR> *heffte_work2;
 
     FFT_UTOFU_BG *fft_utofu;
 
     void run_forward() {
-      heffte_wrapper->forward(heffte_indata, heffte_outdata);
+      heffte_wrapper->forward(heffte_work1, heffte_work1);
     };
     void run_backward() {
-      heffte_wrapper->backward(heffte_indata, heffte_outdata);
+      heffte_wrapper->backward(heffte_work2, heffte_work2);
     };
 
 
@@ -100,13 +105,15 @@ protected:
     virtual void brick2fft() override;
     void compute_gf_ik_brick();
     void compute_gf_ik_node();
-    void poisson_ik_heffte();
+    void poisson_ik_heffte_brick();
+    void poisson_ik_heffte_node();
     void poisson_ik_utofubg();
     void particle_map_node();
     void fieldforce_ik_brick();
     void fieldforce_ik_node();
     void make_rho_node();
-    void init_heffte_fft();
+    void init_heffte_brick();
+    void init_heffte_node();
     void init_node_fft();
 
     void reverse_node();
@@ -122,6 +129,8 @@ protected:
       FFT_SCALAR *send_buf;
       FFT_SCALAR *recv_buf;
     };
+
+    int displs[NUMA_NUM], recvcounts[NUMA_NUM];
 
     
     int nswap, maxswap;
