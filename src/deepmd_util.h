@@ -218,6 +218,40 @@ public:
 };
 
 typedef struct Session_Buf_Struct {
+  AtomMap atommap;
+  NeighborListData nlist_data;
+  InputNlist in_nlist;
+
+  int* nlist;
+  int **d_nlist_a;
+  int *d_nlist_size;
+  NeighborInfo *sel_nei;
+  int sel_nei_size;
+  int *nei_num_v;
+
+  int*  thread_neigh;
+  int*  thread_local_ilist;
+  int*  thread_local_numneigh;
+  int** thread_firstneigh;
+  int*  forward_index_map;
+  int*  backward_index_map;
+  int   backward_index_size;
+  InputNlist lmp_list;
+
+  int *type_natoms, *sec_type_atom;
+  
+  int* datype;
+  FPTYPE* dcoord;
+  double* dforce;
+  double* dvirial;
+  FPTYPE* dextf;
+  int*    ori_datype;
+  FPTYPE* ori_dcoord;
+  double* ori_dforce;
+
+  FPTYPE** rij, **r_matrix, **r_matrix_deriv;
+  FPTYPE** s_vector;
+
   FPTYPE** descrptor;
   FPTYPE** rg_silce;
   FPTYPE** rg_fusion;
@@ -446,8 +480,8 @@ public:
   int** thread_firstneigh;
   int*  forward_index_map;
   int*  backward_index_map;
-  int   backward_index_size;
-  InputNlist lmp_list;
+  int*  backward_index_size;
+  InputNlist *lmp_list;
 
 private:
   int num_intra_nthreads, num_inter_nthreads;
@@ -467,13 +501,13 @@ private:
 
   // PB_param_type1 pb_param_type1;
 
-  std::vector<int> type_natoms, sec_type_atom;
+  int *type_natoms, *sec_type_atom;
 
   // copy neighbor list info from host
   bool init_nbor;
-  NeighborListData nlist_data;
-  InputNlist in_nlist;
-  AtomMap atommap;
+  NeighborListData *nlist_data;
+  InputNlist *in_nlist;
+  AtomMap *atommap;
 
   int max_nbor_size;
 
@@ -481,11 +515,13 @@ private:
   int *d_nlist_size;
 
   NeighborInfo *sel_nei;
-  int sel_nei_size;
+  int *sel_nei_size;
 
   int *nei_num_v;
 
   std::string mesg;
+
+  double 	dener;
 
   int* datype;
   FPTYPE* dcoord;
@@ -496,7 +532,6 @@ private:
   int*    ori_datype;
   FPTYPE* ori_dcoord;
   double* ori_dforce;
-  double 	dener;
 
   FPTYPE** rij, **r_matrix, **r_matrix_deriv;
   FPTYPE** s_vector;
@@ -523,7 +558,7 @@ private:
   FPTYPE *grad_one_matrix;
 
   Session_Buf *sess_bufs, *this_sess;
-  void reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei);
+  void reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei, int _max_nall);
 };
 
 
