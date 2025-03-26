@@ -327,7 +327,8 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
     // MPI_Barrier(comm->comm1D[dir]);
 
     time = MPI_Wtime();
-    
+
+    #if 0
     for(int itype = 0; itype < 2; itype++) {
       double *_in_buf = in_data + itype * nfft_brick;
       for(int p = 0; p < max_nfft_brick[dir]; p+=3) {
@@ -335,13 +336,9 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
           int size = nfft_bricks[dir][r] - p;
           if(size <= 0) continue;
           if(size > 3) size = 3;
-          int _data[12] ;
           double *_out_buf = itype == 0 ? &cos_out[0][nfft_bricks_offset[dir][r]] : &sin_out[0][nfft_bricks_offset[dir][r]];
-          // for(int i = 0; i < size; i++) _data[i] = _out_buf[p] * 1e7;
           utofu_reduce_double(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_BFPSUM, 
                         &_out_buf[p], size, 0);
-          // utofu_reduce_uint64(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_SUM, 
-          //         (uint64_t*)_data, size, 0);
         }
 
         for(int r = 0; r < comm->comm1D_size[dir]; r++) {
@@ -350,22 +347,53 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
           if(size > 3) size = 3;
           int nerr = 0;
           double _reduce_data[3];
-          // int _data[12] ;
           do {
-            // rc = utofu_poll_reduce_uint64(lcl_vbg_ids[dir*2][r][0], 0, (uint64_t*)_data);
             rc = utofu_poll_reduce_double(lcl_vbg_ids[dir*2][r][0], 0, _reduce_data);
           } while (rc == UTOFU_ERR_NOT_COMPLETED);
-          // printf("utofu_reduce_double recv ring %d \n", r); fflush(stdout);
           if(rc != UTOFU_SUCCESS) error->one(FLERR,"utofu_poll_reduce_double fail {} ", rc);
 
           if(r == comm->me3d[dir]) {
             for(int i = 0; i < size; i++) _in_buf[p+i] = _reduce_data[i]; 
-            // for(int i = 0; i < size; i++) _in_buf[p+i] = _data[i] * (1. / 1e7); 
           };
         }
-        // MPI_Barrier(comm->comm1D[dir]);
       }
     }
+    #else 
+    for(int itype = 0; itype < 2; itype++) {
+      double *_in_buf = in_data + itype * nfft_brick;
+      for(int p = 0; p < max_nfft_brick[dir]; p+=12) {
+        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+          int size = nfft_bricks[dir][r] - p;
+          if(size <= 0) continue;
+          if(size > 12) size = 12;
+          int _data[12] ;
+          double *_out_buf = itype == 0 ? &cos_out[0][nfft_bricks_offset[dir][r]] : &sin_out[0][nfft_bricks_offset[dir][r]];
+          for(int i = 0; i < size; i++) _data[i] = _out_buf[p+i] * 1e7;
+          utofu_reduce_uint64(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_SUM, 
+                  (uint64_t*)_data, std::ceil(size/2.0), 0);
+        }
+
+        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+          int size = nfft_bricks[dir][r] - p;
+          if(size <= 0) continue;
+          if(size > 12) size = 12;
+          int nerr = 0;
+          double _reduce_data[3];
+          int _data[12] ;
+          do {
+            rc = utofu_poll_reduce_uint64(lcl_vbg_ids[dir*2][r][0], 0, (uint64_t*)_data);
+          } while (rc == UTOFU_ERR_NOT_COMPLETED);
+          if(rc != UTOFU_SUCCESS) error->one(FLERR,"utofu_poll_reduce_double fail {} ", rc);
+
+          if(r == comm->me3d[dir]) {
+            for(int i = 0; i < size; i++) _in_buf[p+i] = _data[i] * (1. / 1e7); 
+          };
+        }
+      }
+    }
+
+
+    #endif
 
     comm_time += MPI_Wtime() - time;
 
@@ -384,6 +412,7 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
 PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   PPPM(lmp)
 {
+  first_time = 0;
   triclinic_support = 1;
   x_node = nullptr;
   part2grid_node = nullptr;
@@ -399,6 +428,8 @@ PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   if(FFT_LIB_TYPE == FFT_UTOFU_NODE){
     fft_utofu = new FFT_UTOFU_BG(lmp);
   }
+
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -703,6 +734,16 @@ void PPPMDPLR::init_node_fft() {
 void PPPMDPLR::compute(int eflag, int vflag)
 {
 
+  if(first_time == 0) {
+    int max_nloc, max_nall;
+    atom->setMaxNum(max_nloc, max_nall);
+    
+    memory->create(f_lr,         atom->nmax * comm->nthreads, 3, "pppm_dplr->f_lr");
+    memory->create(fele,         max_nloc * 3, "pppm_dplr->fele");
+    memory->create(fele_node,    max_nloc * 3 * NUMA_NUM, "pppm_dplr->fele");
+    first_time = 1;
+  }
+
   // if (me == 0) utils::logmesg(lmp,"[INFO] into PPPMDPLR::compute \n");
   // if (me == 0) utils::logmesg(lmp,"[INFO] differentiation_flag {}\n", differentiation_flag);
   // if (me == 0) utils::logmesg(lmp,"[INFO] triclinic {}\n", domain->triclinic);
@@ -830,9 +871,9 @@ void PPPMDPLR::compute(int eflag, int vflag)
   if(FFT_LIB_TYPE == FFT_UTOFU_NODE) fft_utofu->blas_time = fft_utofu->comm_time = 0.;
   MPI_Barrier(MPI_COMM_WORLD);
   double time = MPI_Wtime();
-  for(int iter = 0; iter < 1000; iter++) {
+  // for(int iter = 0; iter < 1000; iter++) {
     poisson();
-  }
+  // }
   time = MPI_Wtime() - time;
   utils::logmesg(lmp,"[INFO] poission time {} \n", time);
   if(FFT_LIB_TYPE == FFT_UTOFU_NODE)
@@ -936,6 +977,9 @@ void PPPMDPLR::compute(int eflag, int vflag)
   // convert atoms back from lamda to box coords
 
   if (triclinic) domain->lamda2x(atom->nlocal);
+
+  utils::logmesg(lmp,"[INFO] PPPMDPLR energy  {} \n", energy);
+  utils::logmesg_arry(lmp,fmt::format("[info] pppmdplr  virial finial \n"),virial, 6, 1);
 }
 
 

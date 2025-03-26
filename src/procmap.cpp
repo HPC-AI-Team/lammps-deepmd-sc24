@@ -25,7 +25,8 @@
 #include "memory.h"
 #include "tokenizer.h"
 #include "universe.h"
-
+#include <algorithm>
+#include <mpi-ext.h>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -76,6 +77,140 @@ void ProcMap::onelevel_grid(int nprocs, int *user_procgrid, int *procgrid,
 
   memory->destroy(factors);
 }
+
+
+
+void ProcMap::utofu_grid(int *procgrid, double *boxlo, double*boxhi) {
+  int me, nprocs;
+  double outer_area[6]; 
+  MPI_Comm_rank(world,&me);
+
+  FJMPI_Topology_get_shape(&procgrid[0], &procgrid[1], &procgrid[2]);
+
+  // double lines[3];
+  // for(int i = 0; i < 3; i++){
+  //   lines[i] = boxhi[i] - boxlo[i];
+  // }
+
+
+  // outer_area[0] = (lines[0] / (2 * procgrid[0])) * (lines[1] / (2 * procgrid[1])) + 
+  //                     (lines[0] / (2 * procgrid[0])) * (lines[2] / procgrid[2]) + 
+  //                     (lines[1] / (2 * procgrid[1])) * (lines[2] / procgrid[2]);
+  // outer_area[1] = (lines[0] / (2 * procgrid[0])) * lines[1] / procgrid[1] + 
+  //                     (lines[0] / (2 * procgrid[0])) * (lines[2] / (2 * procgrid[2])) + 
+  //                     (lines[1] / procgrid[1]) * (lines[2] / (2 * procgrid[2]));
+  // outer_area[2] = (lines[0] / procgrid[0]) * (lines[1] / (2 * procgrid[1])) + 
+  //               (lines[0] / procgrid[0]) * (lines[2] / (2 * procgrid[2])) + 
+  //               (lines[1] / (2 * procgrid[1])) * (lines[2] / (2 * procgrid[2]));
+  // outer_area[3] = (lines[0] / (4 * procgrid[0])) * (lines[1] / procgrid[1]) + 
+  //               (lines[0] / (4 * procgrid[0])) * (lines[2] / procgrid[2]) + 
+  //               (lines[1] / procgrid[1]) * (lines[2] / procgrid[2]);
+  // outer_area[4] = (lines[0] / procgrid[0]) * (lines[1] / (4 * procgrid[1])) + 
+  //               (lines[0] / procgrid[0]) * (lines[2] / procgrid[2]) + 
+  //               (lines[1] / (4 * procgrid[1])) * (lines[2] / procgrid[2]);
+  // outer_area[5] = (lines[0] / procgrid[0]) * (lines[1] / procgrid[1]) + 
+  //               (lines[0] / procgrid[0]) * (lines[2] / (4 * procgrid[2])) + 
+  //               (lines[1] / procgrid[1]) * (lines[2] / (4 * procgrid[2]));
+
+  // outer_area[0] = 2 * procgrid[0] * procgrid[1] + 2 * procgrid[0] * 2 * procgrid[2] + procgrid[1] * 2 * procgrid[2];
+  // outer_area[1] = 2 * procgrid[0] * 2 * procgrid[1] + 2 * procgrid[0] * procgrid[2] + 2 * procgrid[1] * procgrid[2];
+  // outer_area[2] = procgrid[0] * 2 * procgrid[1] + procgrid[0] * 2 * procgrid[2] + 2 * procgrid[1] * 2 * procgrid[2];
+  // outer_area[3] = 4 * procgrid[0] * procgrid[1] + 4 * procgrid[0] * procgrid[2] + procgrid[1] * procgrid[2];
+  // outer_area[4] = procgrid[0] * 4 * procgrid[1] + procgrid[0] * procgrid[2] + 4 * procgrid[1] * procgrid[2];
+  // outer_area[5] = procgrid[0] * procgrid[1] + procgrid[0] * 4 * procgrid[2] + procgrid[1] * 4 * procgrid[2];
+
+  // // int min_area = std::min_element(outer_area, outer_area+6) - outer_area;
+  // int min_area = 0;
+
+  // switch (min_area)
+  // {
+  //   case 0: procgrid[0] *= 2; procgrid[2] *= 2; break;
+  //   case 1: procgrid[0] *= 2; procgrid[1] *= 2; break;
+  //   case 2: procgrid[1] *= 2; procgrid[2] *= 2; break;
+  //   case 3: procgrid[0] *= 4;  break;
+  //   case 4: procgrid[1] *= 4;  break;
+  //   case 5: procgrid[2] *= 4;  break;
+  
+  //   default: break;
+  // }
+
+  procgrid[0] *=  2;
+  procgrid[2] *=  2;
+
+  if(me == 0) {
+    int tmp_proc[3];
+    FJMPI_Topology_get_shape(&tmp_proc[0], &tmp_proc[1], &tmp_proc[2]);
+    utils::logmesg(lmp," fugaku node is {} {} {},  extend to {} {} {} \n", 
+        tmp_proc[0], tmp_proc[1], tmp_proc[2], procgrid[0], procgrid[1], procgrid[2]);
+  }
+  
+  // procgrid[0] *= 2;
+  // procgrid[2] *= 2;
+  // procgrid[0] *= 2;
+  // procgrid[1] *= 2;
+
+
+}
+
+
+void ProcMap::utofu_map(int *procgrid,
+  int *myloc, int procneigh[3][2], int ***grid2proc)
+{
+int me = comm->me;
+FJMPI_Topology_get_coords(MPI_COMM_WORLD, me, FJMPI_LOGICAL, 3,
+         myloc);
+
+int tmp_proc[3];
+FJMPI_Topology_get_shape(&tmp_proc[0], &tmp_proc[1], &tmp_proc[2]);
+
+int proc_scale[3] = {procgrid[0]/tmp_proc[0],procgrid[1]/tmp_proc[1],procgrid[2]/tmp_proc[2]};
+int offset[3];
+
+offset[2] = (me % 4) / proc_scale[0] / proc_scale[1];
+offset[1] = ((me % 4) / proc_scale[0]) % proc_scale[1];
+offset[0] = (me % 4) % proc_scale[0];
+
+for(int i = 0; i < 3; i++){
+myloc[i] = myloc[i] * proc_scale[i] + offset[i];
+}
+
+
+// myloc[0] *= 2; myloc[2] *= 2;
+// switch (me % 4) {
+//   case 0 : break;
+//   case 1 : myloc[2]++; break;
+//   case 2 : myloc[0]++; break;
+//   case 3 : myloc[0]++; myloc[2]++; break;
+// }
+
+int nprocs;
+MPI_Comm_size(world,&nprocs);
+
+int **gridi;
+memory->create(gridi,nprocs,3,"comm:gridi");
+MPI_Allgather(myloc,3,MPI_INT,gridi[0],3,MPI_INT,world);
+for (int i = 0; i < nprocs; i++)
+grid2proc[gridi[i][0]][gridi[i][1]][gridi[i][2]] = i;
+memory->destroy(gridi);
+
+
+int minus,plus;
+grid_shift(myloc[0],procgrid[0],minus,plus);
+procneigh[0][0] = grid2proc[minus][myloc[1]][myloc[2]];
+procneigh[0][1] = grid2proc[plus][myloc[1]][myloc[2]];
+
+grid_shift(myloc[1],procgrid[1],minus,plus);
+procneigh[1][0] = grid2proc[myloc[0]][minus][myloc[2]];
+procneigh[1][1] = grid2proc[myloc[0]][plus][myloc[2]];
+
+grid_shift(myloc[2],procgrid[2],minus,plus);
+procneigh[2][0] = grid2proc[myloc[0]][myloc[1]][minus];
+procneigh[2][1] = grid2proc[myloc[0]][myloc[1]][plus];
+
+if(comm->me == 0) utils::logmesg(lmp,"[info] utofu map {} {} {}\n", 
+             procgrid[0], procgrid[1],procgrid[2]);
+}
+
 
 /* ----------------------------------------------------------------------
    create a two-level 3d grid of procs

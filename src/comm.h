@@ -15,6 +15,7 @@
 #define LMP_COMM_H
 
 #include "pointers.h"    // IWYU pragma: export
+#include <utofu.h>
 
 namespace LAMMPS_NS {
 
@@ -51,12 +52,15 @@ class Comm : protected Pointers {
 
   // public settings specific to layout = UNIFORM, NONUNIFORM
 
-  int procgrid[3];                     // proc count assigned to each dim of 3d grid
+  int procgrid[3], nodegrid[3];                     // proc count assigned to each dim of 3d grid
   int user_procgrid[3];                // user request for proc counts in each dim
   int myloc[3];                        // which proc I am in each dim, 0 to N-1
   int procneigh[3][2];                 // my 6 neighboring procs, 0/1 = left/right
+  int nodeneigh[3][2];                 // my 6 neighboring procs, 0/1 = left/right
   double *xsplit, *ysplit, *zsplit;    // fractional (0-1) sub-domain sizes, includes 0/1
+  double *xsplit_node, *ysplit_node, *zsplit_node;    // fractional (0-1) sub-domain sizes, includes 0/1
   int ***grid2proc;                    // which proc owns i,j,k loc in 3d grid
+  int ***grid2node;                    // which proc owns i,j,k loc in 3d grid
 
   // public settings specific to layout = TILED
 
@@ -69,6 +73,19 @@ class Comm : protected Pointers {
   bool fp16_flag;
   int tabulate_flag;
   bool deepmd_flag;
+  int fft_type_flag;
+
+  int numa_id;
+  int node_id;
+  MPI_Comm comm1D[3];
+  MPI_Comm numa_comm;
+  MPI_Comm node_comm;
+  int comm1D_size[3];
+  int me3d[3];
+  int nodeloc[3];
+  int nnode;
+  utofu_vbg_id_t lcl_vbg_ids[TNI_NUM][MAX_RING][2];
+
 
 
   // methods

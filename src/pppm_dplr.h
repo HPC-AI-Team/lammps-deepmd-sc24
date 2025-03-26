@@ -48,6 +48,7 @@ public:
   FFT_SCALAR *Wsin[3], *Wcos[3], *Wsin_i[3], *Wcos_i[3];
   FFT_SCALAR *calcu_buf;
 
+
   int rc;
   utofu_vbg_id_t lcl_vbg_ids[TNI_NUM][MAX_RING][2];
   utofu_vbg_id_t rmt_vbg_ids[TNI_NUM][MAX_RING][MAX_RING][2];
@@ -76,6 +77,8 @@ public:
     int FFT_LIB_TYPE;
     int FFT_NODE_ROOT;
     int nmax_node;
+
+    int first_time;
 
     heffte::box3d<> *box_pos;
     heffte::fft3d<heffte::backend::fftw> *heffte_wrapper;

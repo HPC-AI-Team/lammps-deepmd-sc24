@@ -217,61 +217,27 @@ public:
   void make_inlist(InputNlist & inlist);
 };
 
-typedef struct Session_Buf_Struct {
-  AtomMap atommap;
-  NeighborListData nlist_data;
-  InputNlist in_nlist;
+// typedef struct Session_Buf_Struct {
+//   FPTYPE** descrptor;
+//   FPTYPE** rg_silce;
+//   FPTYPE** rg_fusion;
+//   FPTYPE** qmat, **qmat_grad;
 
-  int* nlist;
-  int **d_nlist_a;
-  int *d_nlist_size;
-  NeighborInfo *sel_nei;
-  int sel_nei_size;
-  int *nei_num_v;
+//   FPTYPE** s_vector_grad;
+//   FPTYPE** r_matrix_grid;
+//   FPTYPE** r_matrix_grid_3d[3];
 
-  int*  thread_neigh;
-  int*  thread_local_ilist;
-  int*  thread_local_numneigh;
-  int** thread_firstneigh;
-  int*  forward_index_map;
-  int*  backward_index_map;
-  int   backward_index_size;
-  InputNlist lmp_list;
+//   FPTYPE *descrptor_grad;
+//   FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
+//   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
+//   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
+//   FPTYPE *layer_1_grad_reg, *layer_2_grad_reg, *layer_final_grad;
 
-  int *type_natoms, *sec_type_atom;
-  
-  int* datype;
-  FPTYPE* dcoord;
-  double* dforce;
-  double* dvirial;
-  FPTYPE* dextf;
-  int*    ori_datype;
-  FPTYPE* ori_dcoord;
-  double* ori_dforce;
+//   __fp16 *gemm_fp16_buf;
 
-  FPTYPE** rij, **r_matrix, **r_matrix_deriv;
-  FPTYPE** s_vector;
-
-  FPTYPE** descrptor;
-  FPTYPE** rg_silce;
-  FPTYPE** rg_fusion;
-  FPTYPE** qmat, **qmat_grad;
-
-  FPTYPE** s_vector_grad;
-  FPTYPE** r_matrix_grid;
-  FPTYPE** r_matrix_grid_3d[3];
-
-  FPTYPE *descrptor_grad;
-  FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
-  FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
-  FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
-  FPTYPE *layer_1_grad_reg, *layer_2_grad_reg, *layer_final_grad;
-
-  __fp16 *gemm_fp16_buf;
-
-  FPTYPE *rg_fusion_grad, *rg_slice_grad;
-  FPTYPE *buf;
-} Session_Buf;
+//   FPTYPE *rg_fusion_grad, *rg_slice_grad;
+//   FPTYPE *buf;
+// } Session_Buf;
 
 class DeepPot: public Pointers {
 public:
@@ -285,16 +251,16 @@ public:
               std::vector<int>& _sel,
               std::vector<FPTYPE> &	_box,
               std::string graph_path,
-              int _dipole_flag);
+              int _MODEL_TYPE);
 
   void init(DeepPot *_deep_pot, int _tid);
 
   void init_value();
   void reserve_buffer(int _max_atoms, int _nall);
 
-  void splite_atom(int _current_model = 0);
+  void splite_atom();
 
-  void swith_model(int _current_model);
+  // void swith_model(int _current_model);
 
   void shuffer_dextf(int *bd_idx, FPTYPE *delef_);
 
@@ -311,13 +277,11 @@ public:
 		const int			nghost_,
 		const int			nloc_,
 		const InputNlist &		inlist,
-		const int&			ago,
-    int _current_model = 0);
+		const int&			ago);
 
   void compute (double *ener,
 		double*	force,
-		double*	virial,
-    int _current_model = 0);
+		double*	virial);
 
   void session_run ();
 
@@ -443,17 +407,7 @@ public:
   FPTYPE* avg_zero, *std_ones;
   FPTYPE** grad_f_data;
 
-  FPTYPE  *c_table_info_pair, **c_table_pair;
-  FPTYPE  ***c_matrix_pair, ***c_bias_pair, ***c_idt_pair,  ***c_matrix_t_pair;
-  float16_t  ***c_matrix_fp16_pair,  ***c_matrix_t_fp16_pair;
-  FPTYPE* avg_zero_pair, *std_ones_pair;
-  FPTYPE** grad_f_data_pair;
-
-  FPTYPE  *c_table_info_dipole, **c_table_dipole;
-  FPTYPE  ***c_matrix_dipole, ***c_bias_dipole, ***c_idt_dipole,  ***c_matrix_t_dipole;
-  float16_t  ***c_matrix_fp16_dipole,  ***c_matrix_t_fp16_dipole;
-  FPTYPE* avg_zero_dipole, *std_ones_dipole;
-  FPTYPE** grad_f_data_dipole;
+  int MODEL_TYPE;
 
   std::vector<int> dipole_sel_type;
   
@@ -462,7 +416,7 @@ public:
   std::vector<int> sec_a;
 
   int  dipole_flag;
-  int current_model;
+  // int current_model;
 
   class Timer *t_timer;
 
@@ -480,8 +434,8 @@ public:
   int** thread_firstneigh;
   int*  forward_index_map;
   int*  backward_index_map;
-  int*  backward_index_size;
-  InputNlist *lmp_list;
+  int   backward_index_size;
+  InputNlist lmp_list;
 
 private:
   int num_intra_nthreads, num_inter_nthreads;
@@ -501,13 +455,13 @@ private:
 
   // PB_param_type1 pb_param_type1;
 
-  int *type_natoms, *sec_type_atom;
+  std::vector<int> type_natoms, sec_type_atom;
 
   // copy neighbor list info from host
   bool init_nbor;
-  NeighborListData *nlist_data;
-  InputNlist *in_nlist;
-  AtomMap *atommap;
+  NeighborListData nlist_data;
+  InputNlist in_nlist;
+  AtomMap atommap;
 
   int max_nbor_size;
 
@@ -515,13 +469,11 @@ private:
   int *d_nlist_size;
 
   NeighborInfo *sel_nei;
-  int *sel_nei_size;
+  int sel_nei_size;
 
   int *nei_num_v;
 
   std::string mesg;
-
-  double 	dener;
 
   int* datype;
   FPTYPE* dcoord;
@@ -529,9 +481,11 @@ private:
   double* dvirial;
   FPTYPE* dextf;
   
+  FPTYPE*    ori_dipole;
   int*    ori_datype;
   FPTYPE* ori_dcoord;
   double* ori_dforce;
+  double 	dener;
 
   FPTYPE** rij, **r_matrix, **r_matrix_deriv;
   FPTYPE** s_vector;
@@ -557,8 +511,8 @@ private:
 
   FPTYPE *grad_one_matrix;
 
-  Session_Buf *sess_bufs, *this_sess;
-  void reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei, int _max_nall);
+  // Session_Buf *sess_bufs, *this_sess;
+  // void reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei);
 };
 
 

@@ -92,6 +92,9 @@ void Verlet::init()
 
 void Verlet::setup(int flag)
 {
+
+  if(DEBUG_MSG) utils::logmesg(lmp, "steup .........\n");
+
   if (comm->me == 0 && screen) {
     fputs("Setting up Verlet run ...\n",screen);
     if (flag) {
@@ -146,6 +149,9 @@ void Verlet::setup(int flag)
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
 
   if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after pair lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] after pair virial \n"), force->pair->virial, 6, 1);
+
+  if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
 
 
   if (atom->molecular != Atom::ATOMIC) {
@@ -170,6 +176,9 @@ void Verlet::setup(int flag)
   modify->setup(vflag);
   output->setup(flag);
   update->setupflag = 0;
+
+  if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
+
 
   // MPI_Barrier(world);  
   // MPI_Finalize();
@@ -278,6 +287,9 @@ void Verlet::run(int n)
       timer->stamp(Timer::PAIR);
     }
 
+    if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
+
+
     // self_timer->stamp();
     // MPI_Barrier(world);
     // self_timer->stamp(Timer::PREPARE);
@@ -290,10 +302,15 @@ void Verlet::run(int n)
       timer->stamp(Timer::BOND);
     }
 
+    if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] after pair virial \n"), force->pair->virial, 6, 1);
+
+
     if (kspace_compute_flag) {
       force->kspace->compute(eflag,vflag);
       timer->stamp(Timer::KSPACE);
     }
+    if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
+
 
     if (n_pre_reverse) {
       modify->pre_reverse(eflag,vflag);
@@ -309,9 +326,17 @@ void Verlet::run(int n)
       timer->stamp(Timer::COMM);
     }
 
+    if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
+
+
+
     // force modifications, final time integration, diagnostics
 
     if (n_post_force_any) modify->post_force(vflag);
+
+    if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] after post_force virial \n"), force->pair->virial, 6, 1);
+
+
     modify->final_integrate();
     if (n_end_of_step) modify->end_of_step();
     timer->stamp(Timer::MODIFY);

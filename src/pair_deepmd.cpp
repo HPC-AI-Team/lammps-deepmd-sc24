@@ -162,6 +162,8 @@ PairDeepMD::PairDeepMD(LAMMPS *lmp)
 
   lmp_lists.resize(num_threads);
 
+  memset(first_time, 0, sizeof(int) * 12);
+
   suffix_flag |= Suffix::OMP;
 }
 
@@ -215,20 +217,25 @@ void PairDeepMD::compute(int eflag, int vflag) {
 
       if(first_time[tid] == 0) {
         if(tid == 0) {
-
-          int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / nthreads;
-          if(_thread_atom_num < 10) _thread_atom_num = 16;
+          // int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / nthreads;
+          // if(_thread_atom_num < 10) _thread_atom_num = 16;
           // if(_thread_atom_num < 192) _thread_atom_num = 312;
 
-          max_nloc = _thread_atom_num;
-          max_nall = nall * 2;
+          // max_nloc = _thread_atom_num;
+          // max_nloc = atom->nlocal * 2;
+          // max_nall = nall * 2;
           max_nlist = nnei * 3;
 
-          if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nlist {} \n",  max_nloc,  max_nall, max_nlist);
+          atom->setMaxNum(max_nloc, max_nall);
 
-          // for(int _tid = 0; _tid < num_threads; _tid++){
-          //   deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
-          // }
+          if(comm->me == 0 || DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nlist {} atom->nlocal {}\n",  max_nloc,  max_nall, max_nlist, atom->nlocal);
+          
+          for(int _tid = 0; _tid < num_threads; _tid++){
+            deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
+          }
+          for(int _tid = 0; _tid < num_threads; _tid++){
+            deep_pots_dipole[_tid]->reserve_buffer(max_nloc, max_nall);
+          }
 
           // memory->create(dcoord,   atom->nmax * 3,"pair_deepmd:dcoord");
           memory->create(dvirial,   9,"pair_deepmd:dvirial");
@@ -258,6 +265,8 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // }
 
           // if(comm->me == 0) utils::logmesg(Pair::lmp, "PairDeepMD finish reserve buffer \n");
+
+          
 
           MPI_Barrier(world);
         }
@@ -438,7 +447,12 @@ void PairDeepMD::compute(int eflag, int vflag) {
         }
         #else
 
-        // deep_pots[tid]->splite_atom(0);
+        deep_pots_dipole[tid]->splite_atom();
+        deep_pots[tid]->splite_atom();
+
+        if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish splite_atom tid {} \n", tid);
+
+
         #pragma omp barrier
         deep_pots[tid]->compute (&thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
 
@@ -622,13 +636,25 @@ void PairDeepMD::settings(int narg, char **arg)
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] begin init deep_pot dipole_flag {}\n", dipole_flag));
 
   deep_pot = new DeepPot(Pair::lmp);
-  deep_pot->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path, dipole_flag);
+  deep_pot->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path, 0);
   if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] finish init deep_pot \n"));
 
   deep_pots = new DeepPot*[num_threads];
   for(int i = 0; i < num_threads; i++){
     deep_pots[i] =  new DeepPot(Pair::lmp);
     deep_pots[i]->init(deep_pot, i);
+  }
+  
+  if(dipole_flag) {
+    deep_pot_dipole = new DeepPot(Pair::lmp);
+    deep_pot_dipole->init (rcut, rcut_smth, numb_types, sel, dbox, graph_path, dipole_flag);
+    if (comm->me == 0) utils::logmesg(Pair::lmp, fmt::format("[info] finish init deep_pot_dipole \n"));
+  
+    deep_pots_dipole = new DeepPot*[num_threads];
+    for(int i = 0; i < num_threads; i++){
+      deep_pots_dipole[i] =  new DeepPot(Pair::lmp);
+      deep_pots_dipole[i]->init(deep_pot_dipole, i);
+    }
   }
 
   Pair::lmp->deep_pots = deep_pots;

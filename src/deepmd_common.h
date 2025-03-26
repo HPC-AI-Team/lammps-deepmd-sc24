@@ -56,6 +56,18 @@ typedef double ENERGYTYPE;
 
 namespace LAMMPS_NS {
 
+
+inline void setMaxNum(int &_max_nloc, int &_max_nall, int _nloc, 
+        int _nall, int _natoms, int _nthread) {
+  // int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / comm->nthreads;
+  // if(_thread_atom_num < 10) _thread_atom_num = 16;
+
+  _max_nloc =_nloc * 2;
+  // int max_nloc = _thread_atom_num;
+  _max_nall = _nall * 2;
+
+}
+
 template<typename T>
 inline T dot(
     T a[4], 
@@ -178,6 +190,15 @@ inline void cum_sum(
   _sec.resize (_n_sel.size() + 1);
   _sec[0] = 0;
   for (int ii = 1; ii < _sec.size(); ++ii) {
+    _sec[ii] = _sec[ii-1] + _n_sel[ii-1];
+  }
+}
+inline void cum_sum(
+    int * _sec, 
+    int * _n_sel,
+  int _ntypes)  {
+  _sec[0] = 0;
+  for (int ii = 1; ii < _ntypes+1; ++ii) {
     _sec[ii] = _sec[ii-1] + _n_sel[ii-1];
   }
 }

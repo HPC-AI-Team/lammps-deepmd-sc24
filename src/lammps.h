@@ -20,6 +20,9 @@
 
 #define DEBUG_MSG comm->debug_flag
 #define T_THREAD 12
+#define NUMA_NUM 4
+#define TNI_NUM 6
+#define MAX_RING 12
 
 namespace LAMMPS_NS {
 

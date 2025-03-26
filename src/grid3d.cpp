@@ -421,6 +421,25 @@ void Grid3d::setup_grid(int &ixlo, int &ixhi, int &iylo, int &iyhi,
   ozhi = outzhi;
 }
 
+// void Grid3d::setup_grid_node(int &ixlo, int &ixhi, int &iylo, int &iyhi,
+//   int &izlo, int &izhi,
+//   int &oxlo, int &oxhi, int &oylo, int &oyhi,
+//   int &ozlo, int &ozhi){
+//     inxlo_node = ixlo;
+//     inxhi_node = ixhi;
+//     inylo_node = iylo;
+//     inyhi_node = iyhi;
+//     inzlo_node = izlo;
+//     inzhi_node = izhi;
+//     outxlo_node = oxlo;
+//     outxhi_node = oxhi;
+//     outylo_node = oylo;
+//     outyhi_node = oyhi;
+//     outzlo_node = ozlo;
+//     outzhi_node = ozhi;
+
+//   }
+
 /* ----------------------------------------------------------------------
    additional one-time setup common to both constructors
  ---------------------------------------------------------------------- */
@@ -445,9 +464,14 @@ void Grid3d::initialize()
   fullzlo = outzlo;
   fullzhi = outzhi;
 
+  utils::logmesg(lmp, "[INFO] grid3d out  {}-{} {}-{} {}-{} \n",  outxlo,outxhi,outylo,outyhi,outzlo,outzhi);
+  utils::logmesg(lmp, "[INFO] grid3d full  {}-{} {}-{} {}-{} \n", fullxlo,fullxhi,fullylo,fullyhi,fullzlo,fullzhi);
+
+
   // initialize data structs
 
   nswap = maxswap = 0;
+  // nswap_node = maxswap_node = 0;
   swap = nullptr;
 
   nsend = nrecv = ncopy = 0;
@@ -470,6 +494,7 @@ void Grid3d::initialize()
   // each must know Comm decomp at time Grid instance was created
 
   extract_comm_info();
+  // extract_comm_info_node();
 }
 
 /* ----------------------------------------------------------------------
@@ -661,6 +686,29 @@ void Grid3d::extract_comm_info()
                   rcbinfo,sizeof(RCBinfo),MPI_CHAR,gridcomm);
   }
 }
+
+// void Grid3d::extract_comm_info_node()
+// {
+  
+//     nodexlo = comm->nodeneigh[0][0];
+//     nodexhi = comm->nodeneigh[0][1];
+//     nodeylo = comm->nodeneigh[1][0];
+//     nodeyhi = comm->nodeneigh[1][1];
+//     nodezlo = comm->nodeneigh[2][0];
+//     nodezhi = comm->nodeneigh[2][1];
+
+//     xsplit_node = new double[comm->nodegrid[0]+1];
+//     ysplit_node = new double[comm->nodegrid[1]+1];
+//     zsplit_node = new double[comm->nodegrid[2]+1];
+//     memcpy(xsplit_node, comm->xsplit_node, sizeof(double) * (comm->nodegrid[0]+1));
+//     memcpy(ysplit_node, comm->ysplit_node, sizeof(double) * (comm->nodegrid[1]+1));
+//     memcpy(zsplit_node, comm->zsplit_node, sizeof(double) * (comm->nodegrid[2]+1));
+
+//     memory->create(grid2node,comm->nodegrid[0],comm->nodegrid[1],comm->nodegrid[2],
+//                    "grid3d:grid2node");
+//     memcpy(&grid2node[0][0][0],&comm->grid2node[0][0][0],
+//            sizeof(int) * comm->nodegrid[0] * comm->nodegrid[1] * comm->nodegrid[2]);
+// }
 
 // ----------------------------------------------------------------------
 // setup of local owned/ghost grid comm

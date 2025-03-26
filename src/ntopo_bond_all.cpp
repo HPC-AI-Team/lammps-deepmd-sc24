@@ -37,6 +37,10 @@ NTopoBondAll::NTopoBondAll(LAMMPS *lmp) : NTopo(lmp)
 
 void NTopoBondAll::build()
 {
+  utils::logmesg(lmp, "NTopoBondAll::build\n");
+
+  utils::logmesg_arry(lmp, "num_bond", atom->num_bond, atom->nlocal, 1);
+
   int i, m, atom1;
 
   int nlocal = atom->nlocal;

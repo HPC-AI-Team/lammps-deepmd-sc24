@@ -34,6 +34,7 @@
 #include "procmap.h"
 #include "universe.h"
 #include "update.h"
+#include <mpi-ext.h>
 
 #include <cstring>
 #ifdef _OPENMP
@@ -44,10 +45,19 @@ using namespace LAMMPS_NS;
 
 #define BUFEXTRA 1024
 
-enum{ONELEVEL,TWOLEVEL,NUMA,CUSTOM};
+enum{ONELEVEL,TWOLEVEL,NUMA,CUSTOM,UTOFU};
 enum{CART,CARTREORDER,XYZ};
 
 /* ---------------------------------------------------------------------- */
+
+inline void grid_shift(int myloc, int nprocs, int &minus, int &plus)
+{
+  minus = myloc - 1;
+  if (minus < 0) minus = nprocs - 1;
+  plus = myloc + 1;
+  if (plus == nprocs) plus = 0;
+}
+
 
 Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
 {
@@ -78,11 +88,95 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
 
   grid2proc = nullptr;
   xsplit = ysplit = zsplit = nullptr;
+  xsplit_node = ysplit_node = zsplit_node = nullptr;
   rcbnew = 0;
   multi_reduce = 0;
 
+  {
+    nnode = nprocs / 4;
+    FJMPI_Topology_get_shape(&nodegrid[0], &nodegrid[1], &nodegrid[2]);
+    FJMPI_Topology_get_coords(MPI_COMM_WORLD, me, FJMPI_LOGICAL, 3,
+                                nodeloc);
+    numa_id = me % 4;
+    node_id = me / 4;
+
+    int rc;
+    if(numa_id == NUMA_NUM - 1) {
+      for(int dir = 0; dir < 3; dir++) {
+        for(int tni = dir*2; tni < (dir+1)*2; tni++) {
+          for(int r = 0; r < MAX_RING; r++) {
+            rc = utofu_alloc_vbg(tni, 2, 0, lcl_vbg_ids[tni][r]);
+            if (rc != UTOFU_SUCCESS) {
+              error->one(FLERR,"utofu_alloc_vbg failed  tni {} r {} rc {} \n", tni, r, rc);
+            }
+          }
+        }
+        // utils::logmesg(lmp, "[INFO] allocate dir bg success  \n", dir);
+      }
+    }
+    
+    MPI_Comm_split(MPI_COMM_WORLD, numa_id, me, &numa_comm);
+    MPI_Comm_split(MPI_COMM_WORLD, node_id, me, &node_comm);
+
+    int xCord = nodeloc[2] * nodegrid[1] * nodegrid[0] + nodeloc[1] * nodegrid[0] + (numa_id << 24);
+    int yCord = nodeloc[2] * nodegrid[1] * nodegrid[0] + nodeloc[0] + (numa_id << 24); 
+    int zCord = nodeloc[1] * nodegrid[0] + nodeloc[0] + (numa_id << 24); 
+
+    MPI_Comm_split(MPI_COMM_WORLD, xCord, me, &comm1D[0]);
+    MPI_Comm_split(MPI_COMM_WORLD, yCord, me, &comm1D[1]);
+    MPI_Comm_split(MPI_COMM_WORLD, zCord, me, &comm1D[2]);
+
+    MPI_Comm_rank(comm1D[0],&me3d[0]);
+    MPI_Comm_rank(comm1D[1],&me3d[1]);
+    MPI_Comm_rank(comm1D[2],&me3d[2]);
+
+    MPI_Comm_size(comm1D[0], &comm1D_size[0]);
+    MPI_Comm_size(comm1D[1], &comm1D_size[1]);
+    MPI_Comm_size(comm1D[2], &comm1D_size[2]);
+
+    memory->create(grid2node,nodegrid[0],nodegrid[1],nodegrid[2],
+      "comm:grid2node");
+
+    int _node_comm_me;
+    MPI_Comm_rank(node_comm, &_node_comm_me);
+
+
+    // utils::logmesg(lmp, "[INFO] numa_id {} {} nnode_id {} \n", numa_id, _node_comm_me, node_id);
+    // utils::logmesg(lmp, "[INFO] nodeloc {} {} {} \n", nodeloc[0],nodeloc[1],nodeloc[2]);
+    // utils::logmesg(lmp, "[INFO] comm1D_size {} {} {} \n", comm1D_size[0],comm1D_size[1],comm1D_size[2]);
+    // utils::logmesg(lmp, "[INFO] me3d        {} {} {} \n", me3d[0],me3d[1],me3d[2]);
+    
+    // if(numa_id == NUMA_NUM - 1) {
+    //   int me3Dprocs[3][1024];
+    //   MPI_Allgather(&me, 1, MPI_INT, me3Dprocs[0], 1, MPI_INT, comm1D[0]); utils::logmesg_arry(lmp, "comm3D ranks x", me3Dprocs[0], comm1D_size[0], 1);
+    //   MPI_Allgather(&me, 1, MPI_INT, me3Dprocs[1], 1, MPI_INT, comm1D[1]); utils::logmesg_arry(lmp, "comm3D ranks y", me3Dprocs[1], comm1D_size[1], 1);
+    //   MPI_Allgather(&me, 1, MPI_INT, me3Dprocs[2], 1, MPI_INT, comm1D[2]); utils::logmesg_arry(lmp, "comm3D ranks z", me3Dprocs[2], comm1D_size[2], 1);
+    // }
+
+    
+
+    // for (i = 0; i < nodegrid[0]; i++)
+    //   for (j = 0; j < nodegrid[1]; j++)
+    //     for (k = 0; k < nodegrid[2]; k++) {
+    //       grid2node[i][j][k] = (k * nodegrid[1] + j) * nodegrid[2] + i;
+    //     }
+
+    // int minus,plus;
+    // grid_shift(nodeloc[0],nodegrid[0],minus,plus);
+    // nodeneigh[0][0] = grid2node[minus][nodeloc[1]][nodeloc[2]] * 4 + numa_id;
+    // nodeneigh[0][1] = grid2node[plus][nodeloc[1]][nodeloc[2]] * 4 + numa_id;
+    // grid_shift(nodeloc[1],nodegrid[1],minus,plus);
+    // nodeneigh[1][0] = grid2node[nodeloc[0]][minus][nodeloc[2]] * 4 + numa_id;
+    // nodeneigh[1][1] = grid2node[nodeloc[0]][plus][nodeloc[2]] * 4 + numa_id;
+    // grid_shift(nodeloc[2],nodegrid[2],minus,plus);
+    // nodeneigh[2][0] = grid2node[nodeloc[0]][nodeloc[1]][minus] * 4 + numa_id;
+    // nodeneigh[2][1] = grid2node[nodeloc[0]][nodeloc[1]][plus] * 4 + numa_id;
+
+  }
+
   deepmd_flag = debug_flag = fp16_flag = false;
   tabulate_flag = 5;
+  fft_type_flag = 0;
 
   if (getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1) {
     debug_flag = true;
@@ -96,12 +190,16 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
   if (getenv("TABULATE_FLAG") != nullptr ) {
     tabulate_flag = atoi(getenv("TABULATE_FLAG"));
   }
+  if (getenv("FFT_TYPE_FLAG") != nullptr ) {
+    fft_type_flag = atoi(getenv("FFT_TYPE_FLAG"));
+  }
 
   if (me == 0){
     utils::logmesg(lmp,"  COMM_DEBUG_FLAG {} \n",debug_flag);
     utils::logmesg(lmp,"  DEEPMD_FLAG {} \n",deepmd_flag);
     utils::logmesg(lmp,"  TEST_FP16 {} \n",fp16_flag);
     utils::logmesg(lmp,"  TABULATE_FLAG {} \n",tabulate_flag);
+    utils::logmesg(lmp,"  FFT_TYPE_FLAG {} \n",fft_type_flag);
   }
 
   // use of OpenMP threads
@@ -477,7 +575,9 @@ void Comm::set_processors(int narg, char **arg)
         customfile = utils::strdup(arg[iarg+2]);
         iarg += 1;
 
-      } else error->all(FLERR,"Illegal processors command");
+      } else if (strcmp(arg[iarg+1],"utofu") == 0) {
+        gridflag = UTOFU;
+      }else error->all(FLERR,"Illegal processors command");
       iarg += 2;
 
     } else if (strcmp(arg[iarg],"map") == 0) {
@@ -592,6 +692,8 @@ void Comm::set_proc_grid(int outflag)
 
   } else if (gridflag == CUSTOM) {
     pmap->custom_grid(customfile,nprocs,user_procgrid,procgrid);
+  } else if (gridflag == UTOFU) {
+    pmap->utofu_grid(procgrid, domain->boxlo, domain->boxhi);
   }
 
   // error check on procgrid
@@ -632,8 +734,9 @@ void Comm::set_proc_grid(int outflag)
 
   } else if (gridflag == CUSTOM) {
     pmap->custom_map(procgrid,myloc,procneigh,grid2proc);
+  } else if (gridflag == UTOFU) {
+    pmap->utofu_map(procgrid,myloc,procneigh,grid2proc);
   }
-
   // print 3d grid info to screen and logfile
 
   if (outflag && me == 0) {
@@ -644,6 +747,8 @@ void Comm::set_proc_grid(int outflag)
                           coregrid[0],coregrid[1],coregrid[2]);
     utils::logmesg(lmp,mesg);
   }
+  // utils::logmesg(lmp,fmt::format("[INFO] myloc {} by {} by {} \n",
+  //          myloc[0],myloc[1],myloc[2]));
 
   // print 3d grid details to outfile
 
@@ -663,11 +768,21 @@ void Comm::set_proc_grid(int outflag)
   memory->create(ysplit,procgrid[1]+1,"comm:ysplit");
   memory->create(zsplit,procgrid[2]+1,"comm:zsplit");
 
+  // memory->create(xsplit_node,nodegrid[0]+1,"comm:xsplit_node");
+  // memory->create(ysplit_node,nodegrid[1]+1,"comm:ysplit_node");
+  // memory->create(zsplit_node,nodegrid[2]+1,"comm:zsplit_node");
+
   for (int i = 0; i < procgrid[0]; i++) xsplit[i] = i * 1.0/procgrid[0];
   for (int i = 0; i < procgrid[1]; i++) ysplit[i] = i * 1.0/procgrid[1];
   for (int i = 0; i < procgrid[2]; i++) zsplit[i] = i * 1.0/procgrid[2];
 
   xsplit[procgrid[0]] = ysplit[procgrid[1]] = zsplit[procgrid[2]] = 1.0;
+
+  // for (int i = 0; i < nodegrid[0]; i++) xsplit_node[i] = i * 1.0/nodegrid[0];
+  // for (int i = 0; i < nodegrid[1]; i++) ysplit_node[i] = i * 1.0/nodegrid[1];
+  // for (int i = 0; i < nodegrid[2]; i++) zsplit_node[i] = i * 1.0/nodegrid[2];
+
+  // xsplit_node[nodegrid[0]] = ysplit_node[nodegrid[1]] = zsplit_node[nodegrid[2]] = 1.0;
 
   // set lamda box params after procs are assigned
   // only set once unless load-balancing occurs

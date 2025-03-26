@@ -43,6 +43,8 @@ class Grid3d : protected Pointers {
 
   void setup_grid(int &, int &, int &, int &, int &, int &,
                   int &, int &, int &, int &, int &, int &);
+  // void setup_grid_node(int &, int &, int &, int &, int &, int &,
+  //                 int &, int &, int &, int &, int &, int &);
 
   void setup_comm(int &, int &);
   int ghost_adjacent();
@@ -87,7 +89,13 @@ class Grid3d : protected Pointers {
   int fullxlo, fullxhi;    // extent of grid chunk that caller stores
   int fullylo, fullyhi;    //   can be same as out indices or larger
   int fullzlo, fullzhi;
-
+  
+  // int inxlo_node, inxhi_node;    // inclusive extent of my grid chunk, 0 <= in <= N-1
+  // int inylo_node, inyhi_node;
+  // int inzlo_node, inzhi_node;
+  // int outxlo_node, outxhi_node;      // inclusive extent of my grid chunk plus
+  // int outylo_node, outyhi_node;      //   ghost cells in all 6 directions
+  // int outzlo_node, outzhi_node;      //   lo indices can be < 0, hi indices can be >= N
   // -------------------------------------------
   // internal variables for BRICK layout
   // -------------------------------------------
@@ -96,15 +104,25 @@ class Grid3d : protected Pointers {
   int procylo, procyhi;    // not used for comm_style = tiled
   int proczlo, proczhi;
 
+  // int nodexlo, nodexhi;    // 6 neighbor nodes that adjoin me
+  // int nodeylo, nodeyhi;    // not used for comm_style = tiled
+  // int nodezlo, nodezhi;
+
   int ghostxlo, ghostxhi;    // # of my owned grid planes needed
   int ghostylo, ghostyhi;    // by neighobr procs in each dir as their ghost planes
   int ghostzlo, ghostzhi;
+
+  // int ghostxlo_node, ghostxhi_node;    // # of my owned grid planes needed
+  // int ghostylo_node, ghostyhi_node;    // by neighobr procs in each dir as their ghost planes
+  // int ghostzlo_node, ghostzhi_node;
 
   // swap = exchange of owned and ghost grid cells between 2 procs, including self
 
   struct Swap {
     int sendproc;       // proc to send to for forward comm
     int recvproc;       // proc to recv from for forward comm
+    // int sendnode;       // proc to send to for forward comm
+    // int recvnode;       // proc to recv from for forward comm
     int npack;          // # of datums to pack
     int nunpack;        // # of datums to unpack
     int *packlist;      // 3d array offsets to pack
@@ -112,7 +130,9 @@ class Grid3d : protected Pointers {
   };
 
   int nswap, maxswap;
+  // int nswap_node, maxswap_node;
   Swap *swap;
+  // Swap *swap_node;
 
   // -------------------------------------------
   // internal variables for TILED layout
@@ -203,6 +223,9 @@ class Grid3d : protected Pointers {
   double *xsplit,*ysplit,*zsplit;
   int ***grid2proc;
 
+  // double *xsplit_node,*ysplit_node,*zsplit_node;
+  // int ***grid2node;
+
   // TILED decomposition
   // RCB tree of cut info
   // each proc contributes one value, except proc 0
@@ -236,8 +259,10 @@ class Grid3d : protected Pointers {
   void partition_grid(int, double, double, double, int, int &, int &);
   void ghost_grid();
   void extract_comm_info();
+  // void extract_comm_info_node();
 
   virtual void setup_comm_brick(int &, int &);
+  // virtual void setup_comm_brick_node(int &, int &);
   virtual void setup_comm_tiled(int &, int &);
   int ghost_adjacent_brick();
   int ghost_adjacent_tiled();
@@ -258,12 +283,14 @@ class Grid3d : protected Pointers {
   void box_drop_grid(int *, int, int, int &, int *);
 
   virtual void grow_swap();
+  // virtual void grow_swap_node();
   void grow_overlap();
   void deallocate_remap();
 
-  int indices(int *&, int, int, int, int, int, int);
   int proc_index_uniform(int, int, double, int, double *);
   void partition_tiled(int, int, int, int *);
+  public:
+  int indices(int *&, int, int, int, int, int, int);
 };
 
 }    // namespace LAMMPS_NS

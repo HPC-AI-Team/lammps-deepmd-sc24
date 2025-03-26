@@ -98,12 +98,12 @@ FixDPLR::FixDPLR(LAMMPS *lmp, int narg, char **arg)
     error->all(FLERR,"kspace_style pppm/dplr should be set before this fix\n");
   }
 
-  deep_pots = pair_deepmd->deep_pots;
+  deep_pots_dipole = pair_deepmd->deep_pots_dipole;
 
   // dpt.init(model, 0, "dipole_charge");
   // dtm.init(model, 0, "dipole_charge");
   
-  dipole_sel_type = deep_pots[0]->dipole_sel_type;
+  dipole_sel_type = deep_pots_dipole[0]->dipole_sel_type;
   ntypes = pair_deepmd->numb_types;
 
   if(comm->me == 0) utils::logmesg_arry(lmp, "[INFO] fix_dplr map_vec", map_vec.data(), map_vec.size(), 1);
@@ -143,20 +143,17 @@ void FixDPLR::setup(int vflag)
 }
 
 void FixDPLR::setup_pre_force(int vflag){
-  int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / comm->nthreads;
-  if(_thread_atom_num < 10) _thread_atom_num = 16;
-
-  int max_nloc = atom->nlocal;
-  // int max_nloc = _thread_atom_num;
-  int max_nall = (atom->nlocal + atom->nghost) * 2;
+  int max_nloc, max_nall;
+  atom->setMaxNum(max_nloc, max_nall);
 
   if(comm->me == 0) utils::logmesg(lmp, "[INFO] setup_pre_force param max_nloc {} max_nall {}\n",  max_nloc,  max_nall);
 
-  for(int _tid = 0; _tid < comm->nthreads; _tid++){
-    deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
-  }  
-  memory->create(pppm_dplr->f_lr,         atom->nmax * comm->nthreads, 3, "pppm_dplr->f_lr");
-  memory->create(pppm_dplr->fele,         max_nloc * 3, "pppm_dplr->fele");
+  // for(int _tid = 0; _tid < comm->nthreads; _tid++){
+  //   deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
+  // }  
+  // memory->create(pppm_dplr->f_lr,         atom->nmax * comm->nthreads, 3, "pppm_dplr->f_lr");
+  // memory->create(pppm_dplr->fele,         max_nloc * 3, "pppm_dplr->fele");
+  // memory->create(pppm_dplr->fele_node,    max_nloc * 3 * NUMA_NUM, "pppm_dplr->fele");
 
   memory->create(dvirial,               9,"fix_dplr:dvirial");
   memory->create(thread_dvirial,        comm->nthreads, 9,"fix_dplr:thread_dvirial");
@@ -250,10 +247,10 @@ void FixDPLR::post_integrate()
 void FixDPLR::pre_force(int vflag)
 {
 
-  printf("\n\n*************** fix preforce ntimestep %d *****************\n", update->ntimestep);fflush(stdout);
+  // printf("\n\n*************** fix preforce ntimestep %ld *****************\n", update->ntimestep);fflush(stdout);
 
     // double **x = atom->x;
-  // int *type = atom->type;
+  int *type = atom->type;
   int nlocal = atom->nlocal;
   int nghost = atom->nghost;
   int nall = nlocal + nghost;
@@ -268,13 +265,20 @@ void FixDPLR::pre_force(int vflag)
     }
   }
 
-  #pragma omp parallel
-  {
-    int tid = omp_get_thread_num();
-    deep_pots[tid]->splite_atom(0);
-  }
+  // #pragma omp parallel
+  // {
+  //   int tid = omp_get_thread_num();
 
-  printf("[INFO] fiish splite_atom \n");fflush(stdout);
+  //   deep_pots_dipole[tid]->splite_atom();
+  // }
+
+  // #pragma omp parallel
+  // {
+  //   int tid = omp_get_thread_num();
+  //   deep_pots[tid]->splite_atom(0);
+  // }
+
+  // printf("[INFO] fiish splite_atom \n");fflush(stdout);
   
   // // declear inputs
   // vector<int > dtype (nall);
@@ -354,14 +358,14 @@ void FixDPLR::pre_force(int vflag)
   //     dipole_recd[idx0*3+dd] = tensor[res_idx * 3 + dd];
   //   }
   // }
-  printf("\n**************finish pre_force******************\n");fflush(stdout);
+  // printf("\n**************finish pre_force******************\n");fflush(stdout);
 
 }
 
 
 void FixDPLR::post_force(int vflag)
 {
-  printf("\n\n*************** post_force ntimestep %d *****************\n", update->ntimestep); fflush(stdout);
+  printf("\n\n*************** post_force ntimestep %ld *****************\n", update->ntimestep); fflush(stdout);
 
   if (vflag) {
     v_setup(vflag);
@@ -376,6 +380,20 @@ void FixDPLR::post_force(int vflag)
   printf("FixDPLR vflag %d \n", vflag); fflush(stdout);
   printf("FixDPLR evflag %d \n", evflag); fflush(stdout);
 
+  double *fele = pppm_dplr->fele;
+  int nlocal = atom->nlocal;
+  int nghost = atom->nghost;
+  int nall = nlocal + nghost;
+
+  // if(neighbor->ago == 0) {
+  //   init_valid_pairs();
+  //   atom->nlocal_real = 0;
+  //   for(int i = 0; i < nlocal; i++) {
+  //     if(atom->type[i] <= ntypes)  {
+  //       atom->nlocal_real++;
+  //     }
+  //   }
+  // }
 
   // PPPMDPLR * pppm_dplr = (PPPMDPLR*) force->kspace_match("pppm/dplr", 1);
   // if (!pppm_dplr) {
@@ -383,10 +401,7 @@ void FixDPLR::post_force(int vflag)
   // }
   // const vector<double > & dfele_(pppm_dplr->get_fele());
 
-  double *fele = pppm_dplr->fele;
-  int nlocal = atom->nlocal;
-  int nghost = atom->nghost;
-  int nall = nlocal + nghost;
+
 
   // revise force and virial according to efield
   double * q = atom->q;
@@ -426,10 +441,15 @@ void FixDPLR::post_force(int vflag)
   #pragma omp parallel
   {
     int tid = omp_get_thread_num();
-    deep_pots[tid]->shuffer_dextf(bd_idx, fele);
+
+    // deep_pots_dipole[tid]->splite_atom();
+
+    #pragma omp barrier
+
+    deep_pots_dipole[tid]->shuffer_dextf(bd_idx, fele);
     double *parallel_dforce = pppm_dplr->f_lr[0] + tid * nall * 3;
     memset(parallel_dforce, 0, sizeof(double) * nall * 3);
-    deep_pots[tid]->compute(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid], 1);
+    deep_pots_dipole[tid]->compute(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid]);
 
     pair_deepmd->force_reduce(&(pppm_dplr->f_lr[0][0]), nall, comm->nthreads, 3, tid, 1.);
 
@@ -457,19 +477,46 @@ void FixDPLR::post_force(int vflag)
   }
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force add fele \n"), pppm_dplr->f_lr[0], 3*nlocal, 1 );
+
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] post_force dfcorr \n"), pppm_dplr->f_lr[0], atom->nlocal * 3, 1);
+  
+  comm->reverse_comm(this, 3);
+  
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] post_force dfcorr2 \n"), pppm_dplr->f_lr[0], atom->nlocal * 3, 1);
+
+  double ** f = atom->f;
+  for (int ii = 0; ii < nlocal; ++ii){
+    for(int dd = 0; dd < 3; ++dd){
+      f[ii][dd] += pppm_dplr->f_lr[ii][dd];
+    }
+  }
+
   
   if (vflag) {
-    memset(dvirial, 0, sizeof(double) * 9);
     memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
 
     for(int ii = 0;ii < comm->nthreads; ii++){
-      for(int jj = 0; jj < 9; jj++) 
-        dvirial[jj] += thread_dvirial[ii][jj];
       for(int jj = 0; jj < 3 * nlocal; jj++) 
         dipole_recd[jj] += thread_dipole_recd[ii][jj];
     }  
 
-    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dipole_recd \n"),fele, 3*nlocal, 1 );
+    // for (int ii = 0; ii < nbd_pairs; ++ii){
+    //   int idx0 = bd_pairs[ii].first;
+    //   int idx1 = bd_pairs[ii].second;
+    //   for (int dd = 0; dd < 3; ++dd) {
+    //     dipole_recd[idx0*3+dd] = thread_dipole_recd[0][idx0*3+dd];
+    //   }
+    // }
+
+    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dipole_recd \n"),dipole_recd, 3*nlocal, 1 );
+
+    memset(dvirial, 0, sizeof(double) * 9);
+    
+    for(int ii = 0;ii < comm->nthreads; ii++){
+      for(int jj = 0; jj < 9; jj++) 
+        dvirial[jj] += thread_dvirial[ii][jj];
+    }  
+    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dvirial \n"),dvirial,9, 1 );
 
     for (int ii = 0; ii < nbd_pairs; ++ii){
       int idx0 = bd_pairs[ii].first;
@@ -481,6 +528,8 @@ void FixDPLR::post_force(int vflag)
       }
     }
 
+    if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] post_force dvirial 2 \n"), dvirial, 9, 1);
+
     double vv[6] = {0.0};
     vv[0] += dvirial[0];
     vv[1] += dvirial[4];
@@ -491,6 +540,9 @@ void FixDPLR::post_force(int vflag)
     v_tally(0, vv);  
     // print_v(6, fmt::format("virial type_: "), virial);
   }
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] post_force fix  virial finial \n"),virial, 6, 1);
+
   printf("\n********************************\n");fflush(stdout);
 }
 
@@ -500,9 +552,9 @@ int FixDPLR::pack_reverse_comm(int n, int first, double *buf)
   int m = 0;
   int last = first + n;
   for (int i = first; i < last; i++) {
-    buf[m++] = dfcorr_buff[3*i+0];
-    buf[m++] = dfcorr_buff[3*i+1];
-    buf[m++] = dfcorr_buff[3*i+2];
+    buf[m++] = pppm_dplr->f_lr[0][3*i+0];
+    buf[m++] = pppm_dplr->f_lr[0][3*i+1];
+    buf[m++] = pppm_dplr->f_lr[0][3*i+2];
   }
   return m;
 }
@@ -514,9 +566,9 @@ void FixDPLR::unpack_reverse_comm(int n, int *list, double *buf)
   int m = 0;
   for (int i = 0; i < n; i++) {
     int j = list[i];
-    dfcorr_buff[3*j+0] += buf[m++];
-    dfcorr_buff[3*j+1] += buf[m++];
-    dfcorr_buff[3*j+2] += buf[m++];
+    pppm_dplr->f_lr[0][3*j+0] += buf[m++];
+    pppm_dplr->f_lr[0][3*j+1] += buf[m++];
+    pppm_dplr->f_lr[0][3*j+2] += buf[m++];
   }
 }
 

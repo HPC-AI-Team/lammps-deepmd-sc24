@@ -70,6 +70,8 @@ protected:
 public:
   DeepPot *deep_pot;
   DeepPot **deep_pots;
+  DeepPot *deep_pot_dipole;
+  DeepPot **deep_pots_dipole;
 
   int numb_types;
   

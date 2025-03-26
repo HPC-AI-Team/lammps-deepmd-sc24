@@ -3106,6 +3106,16 @@ int Atom::extract_datatype(const char *name)
    add in global to local mapping storage
 ------------------------------------------------------------------------- */
 
+
+void Atom::setMaxNum(int &_max_nloc, int &_max_nall) {
+    // int _thread_atom_num = (atom->natoms / comm->nprocs) * 4 / comm->nthreads;
+    // if(_thread_atom_num < 10) _thread_atom_num = 16;
+
+    _max_nloc = nlocal * 2;
+    // int max_nloc = _thread_atom_num;
+    _max_nall = (nlocal + nghost) * 2;
+}
+
 double Atom::memory_usage()
 {
   double bytes = avec->memory_usage();

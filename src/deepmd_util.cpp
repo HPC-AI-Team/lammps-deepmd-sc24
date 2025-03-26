@@ -30,6 +30,9 @@ extern "C"
 
 using namespace LAMMPS_NS;
 
+enum{ENER_TYPE, DIPOLE_TYPE};
+
+
 inline void task_division(int nthreads, int nloc, int tid, int &ifrom, int &ito) {
   int idelta_i = nloc / nthreads;
   int idelta_j = nloc % nthreads;
@@ -314,22 +317,10 @@ DeepPot::DeepPot (LAMMPS *lmp) : Pointers(lmp){
   c_matrix_fp16 = new float16_t**[FITTING_LAYER];
   c_matrix_t_fp16 = new float16_t**[FITTING_LAYER];
 
-  c_matrix_pair = new FPTYPE**[FITTING_LAYER];
-  c_bias_pair = new FPTYPE**[FITTING_LAYER];
-  c_idt_pair = new FPTYPE**[FITTING_LAYER];
-  c_matrix_t_pair = new FPTYPE**[FITTING_LAYER];
-  c_matrix_fp16_pair = new float16_t**[FITTING_LAYER];
-  c_matrix_t_fp16_pair = new float16_t**[FITTING_LAYER];
 
-  c_matrix_dipole = new FPTYPE**[FITTING_LAYER];
-  c_bias_dipole = new FPTYPE**[FITTING_LAYER];
-  c_idt_dipole = new FPTYPE**[FITTING_LAYER];
-  c_matrix_t_dipole = new FPTYPE**[FITTING_LAYER];
-  c_matrix_fp16_dipole = new float16_t**[FITTING_LAYER];
-  c_matrix_t_fp16_dipole = new float16_t**[FITTING_LAYER];
 }
 
-void DeepPot::splite_atom(int _current_model) {
+void DeepPot::splite_atom() {
   int global_nlocal = atom->nlocal;
   int global_nghost = atom->nghost;
   int global_nall = global_nlocal + global_nghost;
@@ -338,7 +329,6 @@ void DeepPot::splite_atom(int _current_model) {
   int ifrom, ito;
   NeighList *list = neighbor->lists[0];
 
-  swith_model(_current_model);
 
   task_division_selet_real(nthreads, global_nlocal, atom->nlocal_real, tid, ifrom, ito, atom->type, ntypes);
   // task_division(nthreads, global_nlocal, tid, ifrom, ito);
@@ -350,17 +340,17 @@ void DeepPot::splite_atom(int _current_model) {
     tid,  ifrom, ito, atom->nlocal, atom->nghost, ago);
 
   if(ago == 0) {
-    (*backward_index_size) = 0;
+    backward_index_size = 0;
     for(int global_i_index = ifrom; global_i_index < ito; global_i_index++) {
       if(atom->type[global_i_index] > ntypes) continue;
-      backward_index_map[(*backward_index_size)++] = global_i_index;
+      backward_index_map[backward_index_size++] = global_i_index;
     }
-    int local_nloc = ago == 0 ? (*backward_index_size) : lmp_list->inum;
+    int local_nloc = ago == 0 ? backward_index_size : lmp_list.inum;
     int local_nall = local_nloc;
 
     if (DEBUG_MSG) utils::logmesg(lmp, "splite_atom tid {} local_nloc {}\n", tid, local_nloc);
 
-    if(lmp_list->inum != 0) {
+    if(lmp_list.inum != 0) {
       memset(thread_neigh, 0,          max_nlist * local_nloc * sizeof(int));
       memset(thread_local_ilist, 0,    local_nloc * sizeof(int));
       memset(thread_local_numneigh, 0, local_nloc * sizeof(int));
@@ -396,7 +386,7 @@ void DeepPot::splite_atom(int _current_model) {
         if(local_j_index == -1){
           local_j_index = local_nall++;
           forward_index_map[global_j_idx] = local_j_index;
-          backward_index_map[(*backward_index_size)++] = global_j_idx;
+          backward_index_map[backward_index_size++] = global_j_idx;
         }
         thread_firstneigh[local_i_index][_real_neighbor] = local_j_index;
         _real_neighbor++;
@@ -406,12 +396,12 @@ void DeepPot::splite_atom(int _current_model) {
       cur_neigh += thread_local_numneigh[local_i_index];
     }
 
-    if(max_nlist * max_nloc <= cur_neigh)   error->one(FLERR, "[ERROR] tid {} max_nlist*max_nloc < cur_neigh {}  {} {} ",tid, max_nlist,max_nloc, cur_neigh);
+    if(max_nlist * max_nloc <= cur_neigh)   error->one(FLERR, "[ERROR] max_nlist*max_nloc < cur_neigh   {} {} ", max_nlist*max_nloc, cur_neigh);
 
-    lmp_list->inum = local_nloc;
-    lmp_list->ilist = thread_local_ilist;
-    lmp_list->numneigh = thread_local_numneigh;
-    lmp_list->firstneigh = thread_firstneigh;
+    lmp_list.inum = local_nloc;
+    lmp_list.ilist = thread_local_ilist;
+    lmp_list.numneigh = thread_local_numneigh;
+    lmp_list.firstneigh = thread_firstneigh;
     // assert(cur_neigh == total_neigh);
 
     for(int local_index = 0;local_index < local_nall;local_index++) {
@@ -426,24 +416,24 @@ void DeepPot::splite_atom(int _current_model) {
     if(max_nloc < nloc) error->one(FLERR, "[ERRIR] max_nloc < nloc max_nloc {} nloc {}", max_nloc, nloc);
     if(max_nall < nall) error->one(FLERR, "[ERRIR] max_nall < nall max_nloc {} nall {}", max_nall, nall);
 
-    nlist_data->copy_from_nlist(*lmp_list);
+    nlist_data.copy_from_nlist(lmp_list);
 
     // 初始化 atommap，对local atom的type进行排序
-    atommap->init(ori_datype, nloc);
+    atommap.init(ori_datype, nloc);
 
     // 更新列表，将ilst和jlist更新为排序后的顺序
-    nlist_data->shuffle(*atommap);
-    nlist_data->make_inlist(*in_nlist);
+    nlist_data.shuffle(atommap);
+    nlist_data.make_inlist(in_nlist);
 
     max_nbor_size = 0;
 
-    for(int ii = 0; ii < in_nlist->inum; ++ii){
-      if(in_nlist->numneigh[ii] > max_nbor_size) max_nbor_size = in_nlist->numneigh[ii];
+    for(int ii = 0; ii < in_nlist.inum; ++ii){
+      if(in_nlist.numneigh[ii] > max_nbor_size) max_nbor_size = in_nlist.numneigh[ii];
     }
 
     assert(max_nbor_size < max_nlist);
 
-    memcpy(datype, atommap->get_type(), nloc * sizeof(int));    
+    memcpy(datype, atommap.get_type(), nloc * sizeof(int));    
     memcpy(datype + nloc, ori_datype + nloc, nghost * sizeof(int));
 
     // local atom每种类型原子数量
@@ -454,7 +444,7 @@ void DeepPot::splite_atom(int _current_model) {
       type_natoms[datype[ii]] ++;
     }
 
-    cum_sum(sec_type_atom, type_natoms, ntypes);
+    cum_sum(sec_type_atom, type_natoms);
 
     // if(DEBUG_MSG) print_v(ntypes, "[INFO] type atoms  "   , type_natoms);
     if(DEBUG_MSG) if(tid == 0) print_v(ntypes, "[INFO] type atoms  "   , type_natoms);
@@ -466,16 +456,16 @@ void DeepPot::splite_atom(int _current_model) {
     // if(DEBUG_MSG) print_v(nloc, "[INFO] numneigh  ", in_nlist.numneigh);
 
     for (unsigned ii = 0; ii < nloc; ++ii) {
-      int i_idx = in_nlist->ilist[ii];
+      int i_idx = in_nlist.ilist[ii];
       d_nlist_size[i_idx] = 0;
-      for(unsigned jj = 0; jj < in_nlist->numneigh[ii]; ++jj) {
-        int j_idx = in_nlist->firstneigh[ii][jj];
+      for(unsigned jj = 0; jj < in_nlist.numneigh[ii]; ++jj) {
+        int j_idx = in_nlist.firstneigh[ii][jj];
         d_nlist_a[i_idx][d_nlist_size[i_idx]++] = j_idx ;
       }
     }
 
     if(DEBUG_MSG) if(tid == 0) print_v(d_nlist_size[0], "[INFO] d_nlist_a  ", d_nlist_a[0]);
-    if(DEBUG_MSG) print_v(local_nloc, fmt::format("lmp_list : {}", lmp_list->inum), lmp_list->numneigh);
+    if(DEBUG_MSG) print_v(local_nloc, fmt::format("lmp_list : {}", lmp_list.inum), lmp_list.numneigh);
     if(DEBUG_MSG) utils::logmesg(lmp, "split tid {} build local_nloc {} local_nall {} \n",  tid,  local_nloc, local_nall);
   }
 
@@ -492,7 +482,7 @@ void DeepPot::splite_atom(int _current_model) {
   
   // 将local atom原子位置排序 
   memcpy(dcoord, ori_dcoord, nall*3*sizeof(FPTYPE));
-  atommap->forward (dcoord, ori_dcoord, 3);
+  atommap.forward (dcoord, ori_dcoord, 3);
 
   if(DEBUG_MSG) if(tid == 0) print_v(nall * 1, fmt::format("datype   {} {} :: ", nloc, nall), datype);
   if(DEBUG_MSG) if(tid == 0) print_v(nall * 3, fmt::format("dcoord   {} :: ", nall * 3), dcoord);
@@ -508,12 +498,12 @@ void DeepPot::splite_atom(int _current_model) {
 }
 
 void DeepPot::shuffer_dextf(int *bd_idx, FPTYPE *delef_) {
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf bd_idx {} \n", nloc),bd_idx, nloc, 1 );
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf datype {} \n", nloc),datype, nloc, 1 );
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf dipole_sel_type {} \n", dipole_sel_type.size()),dipole_sel_type.data(), dipole_sel_type.size(), 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} bd_idx {} \n", tid, nloc),bd_idx, nloc, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} datype {} \n", tid, nloc),datype, nloc, 1 );
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} dipole_sel_type {} \n",tid, dipole_sel_type.size()),dipole_sel_type.data(), dipole_sel_type.size(), 1 );
 
   int ndextf = 0;
-  const int *atommap_bkw_map = atommap->get_bkw_map();
+  const int *atommap_bkw_map = atommap.get_bkw_map();
   for(int ii = 0; ii < nloc; ++ii){
     if (binary_search(dipole_sel_type.begin(), dipole_sel_type.end(), datype[ii])){
       // selected atom
@@ -663,12 +653,10 @@ void DeepPot::load_tensorflow_model(int _in_type, std::string prefix,
 
 
   c_table_info_in = get_node_attr(prefix+"filter_type_0/TabulateFusionSeA/table_info");
+  // c_table_info_in = get_node_attr(prefix+"filter_type_0/TabulateFusion/table_info");
 
   if (c_table_info_in == NULL) {
-    c_table_info_in = get_node_attr(prefix+"filter_type_0/TabulateFusion/table_info");
-    if (c_table_info_in == NULL) {
-      error->all(FLERR,"c_table_info_in is NULL \n");
-    }
+    error->all(FLERR,"c_table_info_in is NULL \n");
   }
 
   if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] c_table_info_in {} {} {} {} {} \n", 
@@ -939,121 +927,116 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
   if(DEBUG_MSG) utils::logmesg(lmp, fmt::format("[info] reserve_buffer tid {} max_nnei {} _max_nloc {} _max_nall {} max_nlist {} \n", 
                 tid, max_nnei, _max_nloc, _max_nall, max_nlist));
 
-  grad_one_matrix = new FPTYPE[_max_nloc * 3]; for(int i = 0; i < _max_nloc * 3; i++) grad_one_matrix[i] = 1;
+  thread_neigh = new int[_max_nloc*max_nlist];
+  thread_local_ilist = new int[_max_nloc];
+  thread_local_numneigh = new int[_max_nloc];
+  thread_firstneigh = new int*[_max_nloc];
+  thread_firstneigh[0] = thread_neigh;
 
-  sess_bufs = new Session_Buf[dipole_flag ? 2 : 1];
-  reserve_sessBuf(sess_bufs[0], _max_nloc, n_neuron.data(), ntypes, max_nnei, max_nall);
-  if(dipole_flag) reserve_sessBuf(sess_bufs[1], _max_nloc, n_neuron.data(), ntypes, max_nnei, max_nall);
+  forward_index_map = new int[max_nall];
+  backward_index_map = new int[max_nall];
   
-}
 
-void DeepPot::reserve_sessBuf(Session_Buf &_sess_buf, int _max_nloc, int *_n_neuron, int _ntypes, int _max_nnei, int _max_nall) {
-
-  _sess_buf.sec_type_atom = new int[_ntypes+1];
-  _sess_buf.type_natoms = new int[_ntypes];
-
-  _sess_buf.nlist = new int[_max_nloc * nnei] ;     memset(_sess_buf.nlist, 0, _max_nloc * nnei * sizeof(int));
-  _sess_buf.d_nlist_a = new int*[_max_nloc];
-  for(int i = 0; i < _max_nloc; i++) {
-    _sess_buf.d_nlist_a[i] = new int[max_nlist];   memset(_sess_buf.d_nlist_a[i], 0, max_nlist * sizeof(int)); 
-  }
-  _sess_buf.d_nlist_size = new int[_max_nloc];   memset(_sess_buf.d_nlist_size, 0, _max_nloc * sizeof(int)); 
-
-  _sess_buf.sel_nei_size = 0;
-  _sess_buf.sel_nei = new NeighborInfo[max_nlist]; memset(_sess_buf.sel_nei, 0, max_nlist*sizeof(NeighborInfo));
-
-  _sess_buf.nei_num_v = new int[ntypes+1];        memset(_sess_buf.nei_num_v, 0, (ntypes+1) * sizeof(int)); 
-
-  _sess_buf.atommap.reserve(_max_nloc);
-  _sess_buf.nlist_data.reserve(_max_nloc, _max_nall, max_nlist);
-
-  _sess_buf.thread_neigh = new int[_max_nloc*max_nlist];
-  _sess_buf.thread_local_ilist = new int[_max_nloc];
-  _sess_buf.thread_local_numneigh = new int[_max_nloc];
-  _sess_buf.thread_firstneigh = new int*[_max_nloc];
-  _sess_buf.thread_firstneigh[0] = thread_neigh;
-  _sess_buf.forward_index_map = new int[_max_nall];
-  _sess_buf.backward_index_map = new int[_max_nall];
-
-  _sess_buf.dforce = new double[_max_nall * 3];           memset(_sess_buf.dforce, 0, _max_nall * 3 * sizeof(double));
-  _sess_buf.dvirial = new double[9];                  memset(_sess_buf.dvirial, 0, 9 * sizeof(double));
-  _sess_buf.dcoord = new FPTYPE[_max_nall * 3];           memset(_sess_buf.dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
-  _sess_buf.datype = new int[_max_nall];                  memset(_sess_buf.datype, 0, _max_nall     * sizeof(int));
-  _sess_buf.dextf = new FPTYPE[_max_nloc * 3];           memset(_sess_buf.dcoord, 0, _max_nloc * 3 * sizeof(FPTYPE));
+  dforce = new double[_max_nall * 3];           memset(dforce, 0, _max_nall * 3 * sizeof(double));
+  dvirial = new double[9];                  memset(dvirial, 0, 9 * sizeof(double));
+  dcoord = new FPTYPE[_max_nall * 3];           memset(dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
+  datype = new int[_max_nall];                  memset(datype, 0, _max_nall     * sizeof(int));
+  dextf = new FPTYPE[_max_nloc * 3];           memset(dextf, 0, _max_nloc * 3 * sizeof(FPTYPE));
   
-  _sess_buf.ori_dforce = new double[_max_nall * 3];           memset(_sess_buf.ori_dforce, 0, _max_nall * 3 * sizeof(double));
-  _sess_buf.ori_dcoord = new FPTYPE[_max_nall * 3];           memset(_sess_buf.ori_dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
-  _sess_buf.ori_datype = new int[_max_nall];                  memset(_sess_buf.ori_datype, 0, _max_nall     * sizeof(int));
+  ori_dforce = new double[_max_nall * 3];           memset(ori_dforce, 0, _max_nall * 3 * sizeof(double));
+  ori_dcoord = new FPTYPE[_max_nall * 3];           memset(ori_dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
+  ori_datype = new int[_max_nall];                  memset(ori_datype, 0, _max_nall     * sizeof(int));
+  ori_dipole = new FPTYPE[_max_nloc * 3];              memset(ori_dipole, 0, _max_nloc * 3     * sizeof(FPTYPE));
 
-  _sess_buf.rij = new FPTYPE*[ntypes*ntypes];
-  _sess_buf.r_matrix = new FPTYPE*[ntypes*ntypes];
-  _sess_buf.r_matrix_deriv = new FPTYPE*[ntypes*ntypes];
-  _sess_buf.s_vector = new FPTYPE*[ntypes*ntypes];
+  rij = new FPTYPE*[ntypes*ntypes];
+  r_matrix = new FPTYPE*[ntypes*ntypes];
+  r_matrix_deriv = new FPTYPE*[ntypes*ntypes];
+  s_vector = new FPTYPE*[ntypes*ntypes];
 
   for(int i = 0; i < ntypes*ntypes; i++) {
-    _sess_buf.rij[i] = new FPTYPE[_max_nloc * nnei * 3] ;     memset(_sess_buf.rij[i], 0, _max_nloc * nnei * 3 * sizeof(FPTYPE));
-    _sess_buf.r_matrix[i] = new FPTYPE[_max_nloc * ndescrpt] ;     memset(_sess_buf.r_matrix[i], 0, _max_nloc * ndescrpt * sizeof(FPTYPE));
-    _sess_buf.r_matrix_deriv[i] = new FPTYPE[_max_nloc * ndescrpt * 3] ;     memset(_sess_buf.r_matrix_deriv[i], 0, _max_nloc * ndescrpt * 3 * sizeof(FPTYPE));
-    _sess_buf.s_vector[i] = new FPTYPE[_max_nloc * max_nnei];  memset(_sess_buf.s_vector[i], 0, _max_nloc*max_nnei*sizeof(FPTYPE)); 
+    rij[i] = new FPTYPE[_max_nloc * nnei * 3] ;     memset(rij[i], 0, _max_nloc * nnei * 3 * sizeof(FPTYPE));
+    r_matrix[i] = new FPTYPE[_max_nloc * ndescrpt] ;     memset(r_matrix[i], 0, _max_nloc * ndescrpt * sizeof(FPTYPE));
+    r_matrix_deriv[i] = new FPTYPE[_max_nloc * ndescrpt * 3] ;     memset(r_matrix_deriv[i], 0, _max_nloc * ndescrpt * 3 * sizeof(FPTYPE));
+    s_vector[i] = new FPTYPE[_max_nloc * max_nnei];  memset(s_vector[i], 0, _max_nloc*max_nnei*sizeof(FPTYPE)); 
   }
 
+  grad_one_matrix = new FPTYPE[_max_nloc * 3]; for(int i = 0; i < _max_nloc * 3; i++) grad_one_matrix[i] = 1;
 
-  _sess_buf.s_vector_grad = new FPTYPE*[_ntypes*_ntypes];
-  _sess_buf.r_matrix_grid = new FPTYPE*[_ntypes*_ntypes];
-  for(int dim = 0; dim < 3; dim++) _sess_buf.r_matrix_grid_3d[dim] = new FPTYPE*[_ntypes*_ntypes];
-  for(int i = 0; i < _ntypes*_ntypes; i++) {
+  nlist = new int[_max_nloc * nnei] ;     memset(nlist, 0, _max_nloc * nnei * sizeof(int));
   
-    _sess_buf.s_vector_grad[i] = new FPTYPE[_max_nloc * _max_nnei];  memset(_sess_buf.s_vector_grad[i], 0, _max_nloc*_max_nnei*sizeof(FPTYPE)); 
-    _sess_buf.r_matrix_grid[i] = new FPTYPE[_max_nloc * _max_nnei * 4];  memset(_sess_buf.r_matrix_grid[i], 0, _max_nloc*_max_nnei*4*sizeof(FPTYPE)); 
-    for(int dim = 0; dim < 3; dim++) {_sess_buf.r_matrix_grid_3d[dim][i] = new FPTYPE[_max_nloc * _max_nnei * 4];  memset(_sess_buf.r_matrix_grid_3d[dim][i], 0, _max_nloc*_max_nnei*4*sizeof(FPTYPE)); }
+  d_nlist_a = new int*[_max_nloc];
+  for(int i = 0; i < _max_nloc; i++) {
+    d_nlist_a[i] = new int[max_nlist];   memset(d_nlist_a[i], 0, max_nlist * sizeof(int)); 
+  }
+  d_nlist_size = new int[_max_nloc];   memset(d_nlist_size, 0, _max_nloc * sizeof(int)); 
+
+  // sel_nei = new uint64_t[max_nlist];     memset(sel_nei, 0, max_nlist * sizeof(uint64_t)); 
+  sel_nei_size = 0;
+  sel_nei = new NeighborInfo[max_nlist]; memset(sel_nei, 0, max_nlist*sizeof(NeighborInfo));
+
+  nei_num_v = new int[ntypes+1];        memset(nei_num_v, 0, (ntypes+1) * sizeof(int)); 
+
+
+  atommap.reserve(_max_nloc);
+  nlist_data.reserve(_max_nloc, _max_nall, max_nlist);
+
+
+  s_vector_grad = new FPTYPE*[ntypes*ntypes];
+  r_matrix_grid = new FPTYPE*[ntypes*ntypes];
+  for(int dim = 0; dim < 3; dim++) r_matrix_grid_3d[dim] = new FPTYPE*[ntypes*ntypes];
+  for(int i = 0; i < ntypes*ntypes; i++) {
+  
+    s_vector_grad[i] = new FPTYPE[_max_nloc * max_nnei];  memset(s_vector_grad[i], 0, _max_nloc*max_nnei*sizeof(FPTYPE)); 
+    r_matrix_grid[i] = new FPTYPE[_max_nloc * max_nnei * 4];  memset(r_matrix_grid[i], 0, _max_nloc*max_nnei*4*sizeof(FPTYPE)); 
+    for(int dim = 0; dim < 3; dim++) {r_matrix_grid_3d[dim][i] = new FPTYPE[_max_nloc * max_nnei * 4];  memset(r_matrix_grid_3d[dim][i], 0, _max_nloc*max_nnei*4*sizeof(FPTYPE)); }
   }
   
-  _sess_buf.rg_fusion             = new FPTYPE*[_ntypes];
-  _sess_buf.rg_silce             = new FPTYPE*[_ntypes];
-  _sess_buf.descrptor             = new FPTYPE*[_ntypes];
-  _sess_buf.qmat                      = new FPTYPE*[_ntypes];
-  _sess_buf.qmat_grad                      = new FPTYPE*[_ntypes];
-  for(int i = 0; i < _ntypes; i++) {
-    _sess_buf.rg_fusion[i] = new FPTYPE[_max_nloc*4*last_layer_size]; memset(_sess_buf.rg_fusion[i], 0, _max_nloc*4*last_layer_size*sizeof(FPTYPE)); 
-    _sess_buf.rg_silce[i] = new FPTYPE[_max_nloc*4*n_axis_neuron];   memset(_sess_buf.rg_silce[i], 0, _max_nloc*4*n_axis_neuron*sizeof(FPTYPE)); 
-    _sess_buf.descrptor[i] = new FPTYPE[_max_nloc*last_layer_size*n_axis_neuron];   memset(_sess_buf.descrptor[i], 0, _max_nloc*last_layer_size*n_axis_neuron*sizeof(FPTYPE)); 
+  rg_fusion             = new FPTYPE*[ntypes];
+  rg_silce             = new FPTYPE*[ntypes];
+  descrptor             = new FPTYPE*[ntypes];
+  qmat                      = new FPTYPE*[ntypes];
+  qmat_grad                      = new FPTYPE*[ntypes];
+  for(int i = 0; i < ntypes; i++) {
+    rg_fusion[i] = new FPTYPE[_max_nloc*4*last_layer_size]; memset(rg_fusion[i], 0, _max_nloc*4*last_layer_size*sizeof(FPTYPE)); 
+    rg_silce[i] = new FPTYPE[_max_nloc*4*n_axis_neuron];   memset(rg_silce[i], 0, _max_nloc*4*n_axis_neuron*sizeof(FPTYPE)); 
+    descrptor[i] = new FPTYPE[_max_nloc*last_layer_size*n_axis_neuron];   memset(descrptor[i], 0, _max_nloc*last_layer_size*n_axis_neuron*sizeof(FPTYPE)); 
     
-    if(dipole_flag) {
-      _sess_buf.qmat[i]               =  new FPTYPE[_max_nloc*3*last_layer_size];   memset(_sess_buf.qmat[i], 0, _max_nloc*3*last_layer_size*sizeof(FPTYPE)); 
-      _sess_buf.qmat_grad[i]          =  new FPTYPE[_max_nloc*3*last_layer_size];   memset(_sess_buf.qmat_grad[i], 0, _max_nloc*3*last_layer_size*sizeof(FPTYPE)); 
-
+    if(MODEL_TYPE == DIPOLE_TYPE) {
+      qmat[i]               =  new FPTYPE[_max_nloc*3*last_layer_size];   memset(qmat[i], 0, _max_nloc*3*last_layer_size*sizeof(FPTYPE)); 
+      qmat_grad[i]          =  new FPTYPE[_max_nloc*3*last_layer_size];   memset(qmat_grad[i], 0, _max_nloc*3*last_layer_size*sizeof(FPTYPE)); 
     }
   }
+  descrptor_grad = new FPTYPE[_max_nloc * dim_descrpt];     memset(descrptor_grad, 0, sizeof(FPTYPE)* _max_nloc * dim_descrpt   );
+  layer_0 = new FPTYPE[_max_nloc * n_neuron[0]];           memset(layer_0, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]         );
+  layer_1 = new FPTYPE[_max_nloc * n_neuron[1]];           memset(layer_1, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]         );
+  layer_2 = new FPTYPE[_max_nloc * n_neuron[2]];           memset(layer_2, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]         );
+  layer_final = new FPTYPE[_max_nloc * last_layer_size];   memset(layer_final, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size                   );
+  layer_final_qmat = new FPTYPE[_max_nloc*1*3];            memset(layer_final_qmat, 0, sizeof(FPTYPE)* _max_nloc*1*3                   );
+  layer_0_tanh = new FPTYPE[_max_nloc * n_neuron[0]];      memset(layer_0_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]    );
+  layer_1_tanh = new FPTYPE[_max_nloc * n_neuron[1]];      memset(layer_1_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]    );
+  layer_2_tanh = new FPTYPE[_max_nloc * n_neuron[2]];      memset(layer_2_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]    );
+  layer_0_grad = new FPTYPE[_max_nloc * n_neuron[0]];      memset(layer_0_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]    );
+  layer_1_grad = new FPTYPE[_max_nloc * n_neuron[1]];      memset(layer_1_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]    );
+  layer_2_grad = new FPTYPE[_max_nloc * n_neuron[2]];      memset(layer_2_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]    );
+  layer_1_grad_reg = new FPTYPE[_max_nloc * n_neuron[1]];  memset(layer_1_grad_reg, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]);
+  layer_2_grad_reg = new FPTYPE[_max_nloc * n_neuron[2]];  memset(layer_2_grad_reg, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]);
+  layer_final_grad = new FPTYPE[_max_nloc * last_layer_size];  memset(layer_final_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size);
   
-  _sess_buf.descrptor_grad = new FPTYPE[_max_nloc * dim_descrpt];     memset(_sess_buf.descrptor_grad, 0, sizeof(FPTYPE)* _max_nloc * dim_descrpt   );
-  _sess_buf.layer_0 = new FPTYPE[_max_nloc * n_neuron[0]];           memset(_sess_buf.layer_0, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]         );
-  _sess_buf.layer_1 = new FPTYPE[_max_nloc * n_neuron[1]];           memset(_sess_buf.layer_1, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]         );
-  _sess_buf.layer_2 = new FPTYPE[_max_nloc * n_neuron[2]];           memset(_sess_buf.layer_2, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]         );
-  _sess_buf.layer_final = new FPTYPE[_max_nloc * last_layer_size];   memset(_sess_buf.layer_final, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size                   );
-  _sess_buf.layer_final_qmat = new FPTYPE[_max_nloc*1*3];            memset(_sess_buf.layer_final_qmat, 0, sizeof(FPTYPE)* _max_nloc*1*3                   );
-  _sess_buf.layer_0_tanh = new FPTYPE[_max_nloc * n_neuron[0]];      memset(_sess_buf.layer_0_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]    );
-  _sess_buf.layer_1_tanh = new FPTYPE[_max_nloc * n_neuron[1]];      memset(_sess_buf.layer_1_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]    );
-  _sess_buf.layer_2_tanh = new FPTYPE[_max_nloc * n_neuron[2]];      memset(_sess_buf.layer_2_tanh, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]    );
-  _sess_buf.layer_0_grad = new FPTYPE[_max_nloc * n_neuron[0]];      memset(_sess_buf.layer_0_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[0]    );
-  _sess_buf.layer_1_grad = new FPTYPE[_max_nloc * n_neuron[1]];      memset(_sess_buf.layer_1_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]    );
-  _sess_buf.layer_2_grad = new FPTYPE[_max_nloc * n_neuron[2]];      memset(_sess_buf.layer_2_grad, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]    );
-  _sess_buf.layer_1_grad_reg = new FPTYPE[_max_nloc * n_neuron[1]];  memset(_sess_buf.layer_1_grad_reg, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[1]);
-  _sess_buf.layer_2_grad_reg = new FPTYPE[_max_nloc * n_neuron[2]];  memset(_sess_buf.layer_2_grad_reg, 0, sizeof(FPTYPE)* _max_nloc * n_neuron[2]);
-  _sess_buf.layer_final_grad = new FPTYPE[_max_nloc * last_layer_size];  memset(_sess_buf.layer_final_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size);
+  gemm_fp16_buf = new float16_t[_max_nloc * (n_neuron[0] + dim_descrpt)];  memset(gemm_fp16_buf, 0, sizeof(float16_t)* _max_nloc * (n_neuron[0] + dim_descrpt));
   
-  _sess_buf.gemm_fp16_buf = new float16_t[_max_nloc * (n_neuron[0] + dim_descrpt)];  memset(_sess_buf.gemm_fp16_buf, 0, sizeof(float16_t)* _max_nloc * (n_neuron[0] + dim_descrpt));
-  
-  _sess_buf.rg_fusion_grad = new FPTYPE[_max_nloc * last_layer_size * 4];  memset(_sess_buf.rg_fusion_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size * 4);
-  _sess_buf.rg_slice_grad = new FPTYPE[_max_nloc * n_axis_neuron * 4];    memset(_sess_buf.rg_slice_grad, 0, sizeof(FPTYPE)* _max_nloc * n_axis_neuron * 4);
+  rg_fusion_grad = new FPTYPE[_max_nloc * last_layer_size * 4];  memset(rg_fusion_grad, 0, sizeof(FPTYPE)* _max_nloc * last_layer_size * 4);
+  rg_slice_grad = new FPTYPE[_max_nloc * n_axis_neuron * 4];    memset(rg_slice_grad, 0, sizeof(FPTYPE)* _max_nloc * n_axis_neuron * 4);
   
 }
 
+
+
 void DeepPot::init(DeepPot *_deep_pot, int _tid) {
+  MODEL_TYPE = _deep_pot->MODEL_TYPE;
   tid = _tid;
   sel = _deep_pot->sel;
   sel_a = _deep_pot->sel_a;
   sel_r = _deep_pot->sel_r;
-  dipole_flag = _deep_pot->dipole_flag;
 
   nnei_a = _deep_pot->nnei_a;
   nnei_r = _deep_pot->nnei_r;
@@ -1076,65 +1059,38 @@ void DeepPot::init(DeepPot *_deep_pot, int _tid) {
   sec_a.resize(ntypes+1, 0);
   cum_sum(sec_a, sel_a);
 
-  c_table = new FPTYPE*[ntypes * ntypes];
+  sec_type_atom.resize(ntypes+1, 0);
+  type_natoms.resize(ntypes);
 
-  c_table_info_pair = _deep_pot->c_table_info_pair;
-  c_table_pair = new FPTYPE*[ntypes * ntypes];
+
+  c_table_info = _deep_pot->c_table_info;
+  c_table = new FPTYPE*[ntypes * ntypes];
   for(int ii = 0; ii < ntypes * ntypes; ii++){
-    c_table_pair[ii] = _deep_pot->c_table_pair[ii];
+    c_table[ii] = _deep_pot->c_table[ii];
   }
-  avg_zero_pair = _deep_pot->avg_zero_pair;
-  std_ones_pair = _deep_pot->std_ones_pair;
+  avg_zero = _deep_pot->avg_zero;
+  std_ones = _deep_pot->std_ones;
 
   for(int ii = 0; ii < FITTING_LAYER; ii++) {
-    c_matrix_pair[ii] = new FPTYPE*[ntypes];
-    c_bias_pair[ii] = new FPTYPE*[ntypes];
-    c_idt_pair[ii] = new FPTYPE*[ntypes];
-    c_matrix_t_pair[ii] = new FPTYPE*[ntypes];
-    c_matrix_fp16_pair[ii] = new float16_t*[ntypes];
-    c_matrix_t_fp16_pair[ii] = new float16_t*[ntypes];
+    c_matrix[ii] = new FPTYPE*[ntypes];
+    c_bias[ii] = new FPTYPE*[ntypes];
+    c_idt[ii] = new FPTYPE*[ntypes];
+    c_matrix_t[ii] = new FPTYPE*[ntypes];
+    c_matrix_fp16[ii] = new float16_t*[ntypes];
+    c_matrix_t_fp16[ii] = new float16_t*[ntypes];
     for(int type_i = 0; type_i < ntypes; type_i++) {
-      c_matrix_pair[ii][type_i] = _deep_pot->c_matrix_pair[ii][type_i];
-      c_bias_pair[ii][type_i] = _deep_pot->c_bias_pair[ii][type_i];
-      c_idt_pair[ii][type_i] = _deep_pot->c_idt_pair[ii][type_i];
-      c_matrix_t_pair[ii][type_i] = _deep_pot->c_matrix_t_pair[ii][type_i];
-      c_matrix_fp16_pair[ii][type_i] = _deep_pot->c_matrix_fp16_pair[ii][type_i];
-      c_matrix_t_fp16_pair[ii][type_i] = _deep_pot->c_matrix_t_fp16_pair[ii][type_i];
+      c_matrix[ii][type_i] = _deep_pot->c_matrix[ii][type_i];
+      c_bias[ii][type_i] = _deep_pot->c_bias[ii][type_i];
+      c_idt[ii][type_i] = _deep_pot->c_idt[ii][type_i];
+      c_matrix_t[ii][type_i] = _deep_pot->c_matrix_t[ii][type_i];
+      c_matrix_fp16[ii][type_i] = _deep_pot->c_matrix_fp16[ii][type_i];
+      c_matrix_t_fp16[ii][type_i] = _deep_pot->c_matrix_t_fp16[ii][type_i];
     }
   }
 
-  grad_f_data_pair = _deep_pot->grad_f_data_pair;
+  grad_f_data = _deep_pot->grad_f_data;
   
-  if(dipole_flag) {
-    dipole_sel_type = _deep_pot->dipole_sel_type;
-
-    c_table_info_dipole = _deep_pot->c_table_info_dipole;
-    c_table_dipole = new FPTYPE*[ntypes * ntypes];
-    for(int ii = 0; ii < ntypes * ntypes; ii++){
-      c_table_dipole[ii] = _deep_pot->c_table_dipole[ii];
-    }
-    avg_zero_dipole = _deep_pot->avg_zero_dipole;
-    std_ones_dipole = _deep_pot->std_ones_dipole;
-
-  
-    for(int ii = 0; ii < 4; ii++) {
-      c_matrix_dipole[ii] = new FPTYPE*[ntypes];
-      c_bias_dipole[ii] = new FPTYPE*[ntypes];
-      c_idt_dipole[ii] = new FPTYPE*[ntypes];
-      c_matrix_t_dipole[ii] = new FPTYPE*[ntypes];
-      c_matrix_fp16_dipole[ii] = new float16_t*[ntypes];
-      c_matrix_t_fp16_dipole[ii] = new float16_t*[ntypes];
-      for(int type_i = 0; type_i < ntypes; type_i++) {
-        c_matrix_dipole[ii][type_i] = _deep_pot->c_matrix_dipole[ii][type_i];
-        c_bias_dipole[ii][type_i] = _deep_pot->c_bias_dipole[ii][type_i];
-        c_idt_dipole[ii][type_i] = _deep_pot->c_idt_dipole[ii][type_i];
-        c_matrix_t_dipole[ii][type_i] = _deep_pot->c_matrix_t_dipole[ii][type_i];
-        c_matrix_fp16_dipole[ii][type_i] = _deep_pot->c_matrix_fp16_dipole[ii][type_i];
-        c_matrix_t_fp16_dipole[ii][type_i] = _deep_pot->c_matrix_t_fp16_dipole[ii][type_i];
-      }
-    }
-    grad_f_data_dipole = _deep_pot->grad_f_data_dipole;
-  }
+  dipole_sel_type = _deep_pot->dipole_sel_type;
 
   max_nnei = _deep_pot->max_nnei;
   max_nlist = _deep_pot->max_nlist;
@@ -1143,17 +1099,6 @@ void DeepPot::init(DeepPot *_deep_pot, int _tid) {
 }
 
 void DeepPot::store_pb_data() {
-  c_table_info = c_table_info_pair; 
-  c_table = c_table_pair;
-  std_ones = std_ones_pair;
-  avg_zero = avg_zero_pair;
-  for(int i = 0; i < 4; i++) {
-    c_matrix[i] = c_matrix_pair[i];
-    c_bias[i] = c_bias_pair[i];
-    c_idt[i] = c_idt_pair[i];
-    c_matrix_t[i] = c_matrix_t_pair[i];
-    c_matrix_fp16[i] = c_matrix_fp16_pair[i];
-  }
 
   if(ntypes == 1 && comm->tabulate_flag == 5) {
     PB_param_type1 pb_param_type1;
@@ -1322,16 +1267,6 @@ void DeepPot::store_pb_data() {
 }
 
 void DeepPot::load_data_from_dat(std::string graph_path) {
-  c_table_info = c_table_info_pair; c_table = c_table_pair;
-  std_ones = std_ones_pair;
-  avg_zero = avg_zero_pair;
-  for(int i = 0; i < 4; i++) {
-    c_matrix[i] = c_matrix_pair[i];
-    c_bias[i] = c_bias_pair[i];
-    c_idt[i] = c_idt_pair[i];
-    c_matrix_t[i] = c_matrix_t_pair[i];
-    c_matrix_fp16[i] = c_matrix_fp16_pair[i];
-  }
 
   if(ntypes == 1 && comm->tabulate_flag == 5) {
     PB_param_type1 pb_param_type1;
@@ -1545,13 +1480,15 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
         FPTYPE _ntypes, std::vector<int>& _sel,
         std::vector<FPTYPE> &_box,
         std::string graph_path,
-      int _dipole_flag){
+    int _MODEL_TYPE){
+
+  MODEL_TYPE = _MODEL_TYPE;
+
   rcut = _rcut;
   rcut_smth = _rcut_smth;
   ntypes = _ntypes;
   sel = _sel;
   sel_a = sel;
-  dipole_flag = _dipole_flag;
 
   box = _box;
 
@@ -1570,25 +1507,17 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   sec_a.resize(ntypes+1, 0);
   cum_sum(sec_a, sel_a);
 
+  sec_type_atom.resize(ntypes+1, 0);
+  type_natoms.resize(ntypes);
+
   n_neuron.assign({240, 240, 240, 1});
 
   c_table   = new FPTYPE*[ntypes * ntypes];
 
-  c_table_pair   = new FPTYPE*[ntypes * ntypes];
-  
   for(int ii = 0; ii < FITTING_LAYER; ii++) {
-    c_matrix_pair[ii] = new FPTYPE*[ntypes];
-    c_bias_pair[ii] = new FPTYPE*[ntypes];
-    c_idt_pair[ii] = new FPTYPE*[ntypes];
-  }
-  
-  if(dipole_flag) {
-    c_table_dipole = new FPTYPE*[ntypes * ntypes];
-    for(int ii = 0; ii < FITTING_LAYER; ii++) {
-      c_matrix_dipole[ii] = new FPTYPE*[ntypes];
-      c_bias_dipole[ii] = new FPTYPE*[ntypes];
-      c_idt_dipole[ii] = new FPTYPE*[ntypes];
-    }
+    c_matrix[ii] = new FPTYPE*[ntypes];
+    c_bias[ii] = new FPTYPE*[ntypes];
+    c_idt[ii] = new FPTYPE*[ntypes];
   }
 
   std::string suffix = graph_path.substr(graph_path.find_last_of(".") + 1, graph_path.length());
@@ -1597,23 +1526,22 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   if(suffix == "pb") {
     #ifdef WITH_TENSOR_FLOW
       load_data_and_bcast(graph_path);
-      
-      load_tensorflow_model(ntypes, "", 
-        c_table_info_pair, c_table_pair,
-        c_matrix_pair, c_bias_pair, c_idt_pair, c_matrix_t_pair,
-        c_matrix_fp16_pair,   c_matrix_t_fp16_pair,
-        avg_zero_pair, std_ones_pair,
-        grad_f_data_pair);
-      if(dipole_flag) {
-        load_tensorflow_model(1, "dipole_charge/", 
-          c_table_info_dipole, c_table_dipole,
-          c_matrix_dipole, c_bias_dipole, c_idt_dipole, c_matrix_t_dipole,
-          c_matrix_fp16_dipole,   c_matrix_t_fp16_dipole,
-          avg_zero_dipole, std_ones_dipole,
-          grad_f_data_dipole);
 
+      if(MODEL_TYPE == DIPOLE_TYPE)
         get_vector_from_model(dipole_sel_type, "dipole_charge/model_attr/sel_type");
-      }
+
+      std::string prex = MODEL_TYPE == ENER_TYPE ? "" : "dipole_charge/";
+      int _types = MODEL_TYPE == ENER_TYPE ? ntypes : dipole_sel_type.size();
+      
+      load_tensorflow_model(_types, prex, 
+        c_table_info, c_table,
+        c_matrix, c_bias, c_idt, c_matrix_t,
+        c_matrix_fp16,   c_matrix_t_fp16,
+        avg_zero, std_ones,
+        grad_f_data);
+
+      
+      
     #else
       error->all(FLERR,"Illegal graph_path");
     #endif
@@ -1634,158 +1562,44 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
 
   if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] max_nlist {} max_nnei {} nnei {} \n", max_nlist, max_nnei, nnei));
 
-  // if(comm->me == 0) utils::logmesg_arry(lmp, fmt::format("table:begore"), c_table_pair[0], 768, 1);
+  // if(comm->me == 0) utils::logmesg_arry(lmp, fmt::format("table:begore"), c_table[0], 768, 1);
 
-  for(int i = 0; i < ntypes * ntypes; i++) {
-    int N = (c_table_info_pair[1] - c_table_info_pair[0]) / c_table_info_pair[3] + 
-                          (c_table_info_pair[2] - c_table_info_pair[1]) / c_table_info_pair[4];
+  int _types = MODEL_TYPE == ENER_TYPE ? ntypes : dipole_sel_type.size();
+  for(int i = 0; i < _types * ntypes; i++) {
+    // int N = (c_table_info_pair[1] - c_table_info_pair[0]) / c_table_info_pair[3] + 
+    //                       (c_table_info_pair[2] - c_table_info_pair[1]) / c_table_info_pair[4];
     #ifdef HIGH_PREC
-      convert_H_W(c_table_pair[i], 1360, 8, 16, 6);
+      convert_H_W(c_table[i], 1360, 8, 16, 6);
     #else 
-      convert_H_W(c_table_pair[i], 1360, 4, 32, 6);
+      convert_H_W(c_table[i], 1360, 4, 32, 6);
     #endif
   }
   for(int i = 0; i < ntypes * nem; i++) {
-    std_ones_pair[i] = 1./std_ones_pair[i];
+    std_ones[i] = 1./std_ones[i];
   }
   
-  if(dipole_flag) {
-    for(int i = 0; i < 1 * ntypes; i++) {
-      int N = (c_table_info_dipole[1] - c_table_info_dipole[0]) / c_table_info_dipole[3] + 
-               (c_table_info_dipole[2] - c_table_info_dipole[1]) / c_table_info_dipole[4];
-      #ifdef HIGH_PREC
-        convert_H_W(c_table_dipole[i], 1360, 8, 16, 6);
-      #else 
-        convert_H_W(c_table_dipole[i], 1360, 4, 32, 6);
-      #endif
-    } 
-    for(int i = 0; i < ntypes * nem; i++) {
-      std_ones_dipole[i] = 1./std_ones_dipole[i];
-    }
-  }
 
-  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] table_info  : {} {} {} {} {} {} \n", c_table_info_pair[0], c_table_info_pair[1],
-        c_table_info_pair[2], c_table_info_pair[3],c_table_info_pair[4], c_table_info_pair[5]));
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] table_info  : {} {} {} {} {} {} \n", c_table_info[0], c_table_info[1],
+        c_table_info[2], c_table_info[3],c_table_info[4], c_table_info[5]));
 
-  // if(comm->me == 0) utils::logmesg_arry(lmp, fmt::format("table:after"), c_table_pair[0], 768, 1);
+  // if(comm->me == 0) utils::logmesg_arry(lmp, fmt::format("table:after"), c_table[0], 768, 1);
 
   // MPI_Barrier(MPI_COMM_WORLD);
   // MPI_Finalize();
 }
 
-void DeepPot::swith_model(int _current_model) {
-  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] swith_model current_mode {}\n", _current_model);
-
-  if(_current_model == 0) {
-    c_table_info = c_table_info_pair;  c_table = c_table_pair;
-    std_ones = std_ones_pair;  avg_zero = avg_zero_pair;
-    grad_f_data = grad_f_data_pair;
-    for(int i = 0; i < FITTING_LAYER; i++) {
-      c_matrix[i] = c_matrix_pair[i];
-      c_bias[i] = c_bias_pair[i];
-      c_idt[i] = c_idt_pair[i];
-      c_matrix_t[i] = c_matrix_t_pair[i];
-      c_matrix_fp16[i] = c_matrix_fp16_pair[i];
-      c_matrix_t_fp16[i] = c_matrix_t_fp16_pair[i];
-    }
-    this_sess = &sess_bufs[0];
-  } else {
-    c_table_info = c_table_info_dipole;  c_table = c_table_dipole;
-    std_ones = std_ones_dipole; avg_zero = avg_zero_dipole;
-    grad_f_data = grad_f_data_dipole;
-    for(int i = 0; i < FITTING_LAYER; i++) {
-      c_matrix[i] = c_matrix_dipole[i];
-      c_bias[i] = c_bias_dipole[i];
-      c_idt[i] = c_idt_dipole[i];
-      c_matrix_t[i] = c_matrix_t_dipole[i];
-      c_matrix_fp16[i] = c_matrix_fp16_dipole[i];
-      c_matrix_t_fp16[i] = c_matrix_t_fp16_dipole[i];
-    }
-    this_sess = &sess_bufs[1];
-  }
-
-  atommap = &this_sess->atommap;
-  nlist_data = &this_sess->nlist_data;
-  in_nlist = &this_sess->in_nlist;
-
-  sec_type_atom = this_sess->sec_type_atom;
-  type_natoms = this_sess->type_natoms;
-
-  nlist = this_sess->nlist;
-  d_nlist_a = this_sess->d_nlist_a;
-  d_nlist_size = this_sess->d_nlist_size;
-  sel_nei = this_sess->sel_nei;
-  sel_nei_size = &this_sess->sel_nei_size;
-  nei_num_v = this_sess->nei_num_v;
-
-  thread_neigh = this_sess->thread_neigh;
-  thread_local_ilist = this_sess->thread_local_ilist;
-  thread_local_numneigh = this_sess->thread_local_numneigh;
-  thread_firstneigh = this_sess->thread_firstneigh;
-  forward_index_map = this_sess->forward_index_map;
-  backward_index_map = this_sess->backward_index_map;
-  backward_index_size = &this_sess->backward_index_size;
-  lmp_list = &this_sess->lmp_list;
-
-  datype = this_sess->datype;
-  dcoord = this_sess->dcoord;
-  dforce = this_sess->dforce;
-  dvirial = this_sess->dvirial;
-  dextf = this_sess->dextf;
-  ori_datype = this_sess->ori_datype;
-  ori_dcoord = this_sess->ori_dcoord;
-  ori_dforce = this_sess->ori_dforce;
-
-  rij = this_sess-> rij; 
-  r_matrix = this_sess->r_matrix; 
-  r_matrix_deriv = this_sess->r_matrix_deriv;
-  s_vector = this_sess->s_vector;
-
-  descrptor = this_sess->descrptor; 
-  rg_silce =  this_sess->rg_silce; 
-  rg_fusion = this_sess->rg_fusion; 
-  qmat          = this_sess->qmat;
-  qmat_grad     = this_sess->qmat_grad;
-
-  s_vector_grad = this_sess->s_vector_grad;
-  r_matrix_grid = this_sess->r_matrix_grid;
-  for(int dim = 0; dim < 3; dim++) r_matrix_grid_3d[dim] = this_sess->r_matrix_grid_3d[dim];
-
-  descrptor_grad = this_sess->descrptor_grad;
-  layer_0 = this_sess->layer_0;
-  layer_1 = this_sess->layer_1;
-  layer_2 = this_sess->layer_2;
-  layer_final = this_sess->layer_final;
-  layer_final_qmat = this_sess->layer_final_qmat;
-  layer_0_tanh = this_sess->layer_0_tanh;
-  layer_1_tanh = this_sess->layer_1_tanh;
-  layer_2_tanh = this_sess->layer_2_tanh;
-  layer_0_grad = this_sess->layer_0_grad;
-  layer_1_grad = this_sess->layer_1_grad;
-  layer_2_grad = this_sess->layer_2_grad;
-  layer_1_grad_reg = this_sess->layer_1_grad_reg;
-  layer_2_grad_reg = this_sess->layer_2_grad_reg;
-  layer_final_grad = this_sess->layer_final_grad;
-
-  gemm_fp16_buf = this_sess->gemm_fp16_buf;
-  rg_fusion_grad = this_sess->rg_fusion_grad;
-  rg_slice_grad = this_sess->rg_slice_grad;
-}
 
 // dforce_为 parallel_force
 void DeepPot::compute (ENERGYTYPE *			dener_,
   double*	dforce_,
-  double*	dvirial_,	 
-  int _current_model) {
+  double*	dvirial_) {
  
   dener = 0;
 
-  current_model = _current_model;
   
   //  切换模式
- swith_model(_current_model);
 
-  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] deepmd compute tid {} _current_model \n", tid, _current_model);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} \n", tid, MODEL_TYPE);
 
 
   if (nloc == 0) {
@@ -1801,10 +1615,24 @@ void DeepPot::compute (ENERGYTYPE *			dener_,
   // bkw_map，存放 所有的 real atom
   session_run();
 
-  *dener_ = dener;
+  if(MODEL_TYPE == ENER_TYPE){
+    *dener_ = dener;
+  } else if(MODEL_TYPE == DIPOLE_TYPE) {
+    memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
+
+    atommap.backward (ori_dipole, layer_final_qmat, 3);
+
+    for(int local_index = 0; local_index < nloc; local_index++) {
+      int global_index = backward_index_map[local_index];
+      dener_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
+      dener_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
+      dener_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
+    }
+  }
+
   memcpy(ori_dforce, dforce, nall * 3 * sizeof(double));
   memcpy(dvirial_, dvirial, 9 * sizeof(double));
-  atommap->backward (ori_dforce, dforce, 3);
+  atommap.backward (ori_dforce, dforce, 3);
   
   // backward会原本的排布
   for(int local_index = 0; local_index < nall; local_index++) {
@@ -1823,8 +1651,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
 	 const int			nghost_,
    const int      nloc_,
 	 const InputNlist &		lmp_list,
-	 const int&			ago,
-   int _current_model) {
+	 const int&			ago) {
 
   nghost = nghost_;
   nloc =   nloc_;
@@ -1832,11 +1659,11 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
   
   dener = 0;
 
-  current_model = _current_model;
+  // current_model = _current_model;
 
   // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] begin deeppot compute _current_model {}\n", _current_model));
 
-  swith_model(_current_model);
+  // swith_model(_current_model);
 
   if (nloc == 0) {
     dener_ = 0;
@@ -1857,19 +1684,19 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
 
   // t_timer->stamp();
   if (ago == 0) {
-    nlist_data->copy_from_nlist(lmp_list);
+    nlist_data.copy_from_nlist(lmp_list);
 
     // 初始化 atommap，对local atom的type进行排序
-    atommap->init(datype_, nloc);
+    atommap.init(datype_, nloc);
 
     // 更新列表，将ilst和jlist更新为排序后的顺序
-    nlist_data->shuffle(*atommap);
-    nlist_data->make_inlist(*in_nlist);
+    nlist_data.shuffle(atommap);
+    nlist_data.make_inlist(in_nlist);
 
     max_nbor_size = 0;
 
-    for(int ii = 0; ii < in_nlist->inum; ++ii){
-      if(in_nlist->numneigh[ii] > max_nbor_size) max_nbor_size = in_nlist->numneigh[ii];
+    for(int ii = 0; ii < in_nlist.inum; ++ii){
+      if(in_nlist.numneigh[ii] > max_nbor_size) max_nbor_size = in_nlist.numneigh[ii];
     }
 
     assert(max_nbor_size < max_nlist);
@@ -1877,7 +1704,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
     // if(DEBUG_MSG) if(tid == 0)  
     // if(DEBUG_MSG) utils::logmesg(lmp, fmt::format("[info] max_nbor_size {} inum {} nloc {} nnei {} \n", max_nbor_size, in_nlist.inum, nloc, nnei));
 
-    memcpy(datype, atommap->get_type(), nloc * sizeof(int));
+    memcpy(datype, atommap.get_type(), nloc * sizeof(int));
 
     memcpy(datype + nloc, datype_ + nloc, nghost * sizeof(int));
 
@@ -1889,7 +1716,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
       type_natoms[datype[ii]] ++;
     }
 
-    cum_sum(sec_type_atom, type_natoms, ntypes);
+    cum_sum(sec_type_atom, type_natoms);
 
     // if(DEBUG_MSG) print_v(ntypes, "[INFO] type atoms  "   , type_natoms);
     if(DEBUG_MSG) if(tid == 0) print_v(ntypes, "[INFO] type atoms  "   , type_natoms);
@@ -1901,10 +1728,10 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
     // if(DEBUG_MSG) print_v(nloc, "[INFO] numneigh  ", in_nlist.numneigh);
 
     for (unsigned ii = 0; ii < nloc; ++ii) {
-      int i_idx = in_nlist->ilist[ii];
+      int i_idx = in_nlist.ilist[ii];
       d_nlist_size[i_idx] = 0;
-      for(unsigned jj = 0; jj < in_nlist->numneigh[ii]; ++jj) {
-        int j_idx = in_nlist->firstneigh[ii][jj];
+      for(unsigned jj = 0; jj < in_nlist.numneigh[ii]; ++jj) {
+        int j_idx = in_nlist.firstneigh[ii][jj];
         d_nlist_a[i_idx][d_nlist_size[i_idx]++] = j_idx ;
       }
     }
@@ -1914,7 +1741,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
 
   // 将local atom原子位置排序 
   memcpy(dcoord, dcoord_, nall*3*sizeof(FPTYPE));
-  atommap->forward (dcoord, dcoord_, 3);
+  atommap.forward (dcoord, dcoord_, 3);
 
   if(DEBUG_MSG) if(tid == 0) print_v(nall * 1, fmt::format("datype   {} {} :: ", nloc, nall), datype);
   if(DEBUG_MSG) if(tid == 0) print_v(nall * 3, fmt::format("dcoord   {} :: ", nall * 3), dcoord);
@@ -1925,7 +1752,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
   dener_ = dener;
   memcpy(dforce_, dforce, nall * 3 * sizeof(double));
   memcpy(dvirial_, dvirial, 9 * sizeof(double));
-  atommap->backward (dforce_, dforce, 3);
+  atommap.backward (dforce_, dforce, 3);
   
   // bkw map
   // dforce_.resize(fwd_map.size() * 3);
@@ -1936,7 +1763,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
 void DeepPot::session_run () {
   // get Descriptor
 
-  int sess_ntypes = current_model ? dipole_sel_type.size() : ntypes;
+  int sess_ntypes = (MODEL_TYPE == DIPOLE_TYPE) ? dipole_sel_type.size() : ntypes;
 
   for(int type_i = 0; type_i < sess_ntypes; type_i++) {
     prod_R_matrix(type_i);
@@ -1946,7 +1773,7 @@ void DeepPot::session_run () {
   }  
 
   for(int type_i = 0; type_i < sess_ntypes; type_i++) {
-    if(current_model)
+    if((MODEL_TYPE == DIPOLE_TYPE))
       fitting_net_dipole(type_i);
     else
       fitting_net_normal(type_i);
@@ -1996,7 +1823,7 @@ void DeepPot::embedding_net(int type_i) {
     }
   }
   
-  if(current_model == 1) {
+  if((MODEL_TYPE == DIPOLE_TYPE)) {
     int ll = 0;
     for(int ii = 0 ; ii < type_natoms[type_i]; ii++) 
       for(int jj = 1 ; jj < 4; jj++) 
@@ -2016,7 +1843,7 @@ void DeepPot::embedding_net(int type_i) {
   t_timer->stamp(Timer::EM_MUT_3D);
 
   if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size * n_axis_neuron, fmt::format("descrptor[type_i] type_i {}\n",type_i ), descrptor[type_i]);
-  if(DEBUG_MSG && current_model == 1) if(tid == 0) print_v(last_layer_size * 3, fmt::format("qmat[type_i]          type_i {}\n",type_i ), qmat[type_i]);
+  if(DEBUG_MSG && (MODEL_TYPE == DIPOLE_TYPE)) if(tid == 0) print_v(last_layer_size * 3, fmt::format("qmat[type_i]          type_i {}\n",type_i ), qmat[type_i]);
 }
 
 
@@ -2070,9 +1897,10 @@ void DeepPot::fitting_net_dipole(int type_i) {
   matmul(type_natoms[type_i], last_layer_size,   n_neuron[2],  layer_2,    c_matrix[3][type_i], c_bias[3][type_i], layer_final);
   if(DEBUG_MSG) if(tid == 0) print_v(last_layer_size, fmt::format("layer_final type_{}: ", type_i), layer_final);
 
-  matmul_3d(type_natoms[type_i], 1, 3, last_layer_size, layer_final, qmat[type_i], layer_final_qmat, false, false);
+  FPTYPE *layer_final_qmat_off = layer_final_qmat + 3 * sec_type_atom[type_i];
+  matmul_3d(type_natoms[type_i], 1, 3, last_layer_size, layer_final, qmat[type_i], layer_final_qmat_off, false, false);
 
-  if(DEBUG_MSG) if(tid == 0) print_v(type_natoms[type_i] * 3, fmt::format("dipole layer_final_qmat type_{}: ", type_i), layer_final_qmat);
+  if(DEBUG_MSG) if(tid == 0) print_v(type_natoms[type_i] * 3, fmt::format("dipole layer_final_qmat_off type_{}: ", type_i), layer_final_qmat_off);
 
   for(int dim = 0; dim < 3; dim++) {
 
@@ -2260,7 +2088,7 @@ void DeepPot::fitting_net_normal(int type_i) {
 
 
 
-  if(DEBUG_MSG) if(tid == 0)  print_v(n_neuron[2], fmt::format("final grad type_i {}: ", type_i), layer_2_grad_reg);
+  print_v(n_neuron[2], fmt::format("final grad type_i {}: ", type_i), layer_2_grad_reg);
 
   if(update->ntimestep == output->next || update->ntimestep == 0) {
     // print_v(n_neuron[1], fmt::format("fast_tanh layer2 type_i {}: ", type_i), layer_2_tanh);
@@ -2416,7 +2244,7 @@ void DeepPot::prod_atom_nlist() {
       }
     
       memset(sel_nei, 0, d_nlist_size[ii]*sizeof(NeighborInfo));
-      (*sel_nei_size) = 0;
+      sel_nei_size = 0;
   
       FPTYPE ix = dcoord[ii * 3 + 0];
       FPTYPE iy = dcoord[ii * 3 + 1];
@@ -2430,22 +2258,22 @@ void DeepPot::prod_atom_nlist() {
         diff[2] = dcoord[j_idx * 3 + 2] - iz;
         FPTYPE rr = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];    
         if (rr <= rcut * rcut) {
-          sel_nei[(*sel_nei_size)].type = datype[j_idx];
-          sel_nei[(*sel_nei_size)].dist = rr;
-          sel_nei[(*sel_nei_size)].index = j_idx;
-          (*sel_nei_size)++;
-          assert((*sel_nei_size) <= max_nlist);
+          sel_nei[sel_nei_size].type = datype[j_idx];
+          sel_nei[sel_nei_size].dist = rr;
+          sel_nei[sel_nei_size].index = j_idx;
+          sel_nei_size++;
+          assert(sel_nei_size <= max_nlist);
         }
       }
   
     
-      std::sort(sel_nei, sel_nei+(*sel_nei_size));
+      std::sort(sel_nei, sel_nei+sel_nei_size);
   
       for(int kk = 0; kk < ntypes+1; kk++) {
         nei_num_v[kk] = sec_a[kk];
       }
       int overflowed = -1;
-      for (unsigned kk = 0; kk < (*sel_nei_size); ++kk) {
+      for (unsigned kk = 0; kk < sel_nei_size; ++kk) {
         const int & nei_type = sel_nei[kk].type;
         int index = sel_nei[kk].index;
         if (nei_num_v[nei_type] < sec_a[nei_type+1]) {
@@ -2474,9 +2302,6 @@ void DeepPot::prod_atom_nlist() {
       }
     }
   }
-
-  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] prod_atom_nlist tid {} finish \n", tid);
-
 }
 
 void DeepPot::prod_R_matrix(int type_i) {
@@ -2627,7 +2452,7 @@ void DeepPot::prod_env_mat_a() {
       }
     
       memset(sel_nei, 0, d_nlist_size[ii]*sizeof(NeighborInfo));
-      (*sel_nei_size) = 0;
+      sel_nei_size = 0;
 
       FPTYPE ix = dcoord[ii * 3 + 0];
       FPTYPE iy = dcoord[ii * 3 + 1];
@@ -2641,22 +2466,22 @@ void DeepPot::prod_env_mat_a() {
         diff[2] = dcoord[j_idx * 3 + 2] - iz;
         FPTYPE rr = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];    
         if (rr <= rcut * rcut) {
-          sel_nei[(*sel_nei_size)].type = datype[j_idx];
-          sel_nei[(*sel_nei_size)].dist = rr;
-          sel_nei[(*sel_nei_size)].index = j_idx;
-          (*sel_nei_size)++;
-          assert((*sel_nei_size) <= max_nlist);
+          sel_nei[sel_nei_size].type = datype[j_idx];
+          sel_nei[sel_nei_size].dist = rr;
+          sel_nei[sel_nei_size].index = j_idx;
+          sel_nei_size++;
+          assert(sel_nei_size <= max_nlist);
         }
       }
 
     
-      std::sort(sel_nei, sel_nei+(*sel_nei_size));
+      std::sort(sel_nei, sel_nei+sel_nei_size);
 
       for(int kk = 0; kk < ntypes+1; kk++) {
         nei_num_v[kk] = sec_a[kk];
       }
       int overflowed = -1;
-      for (unsigned kk = 0; kk < (*sel_nei_size); ++kk) {
+      for (unsigned kk = 0; kk < sel_nei_size; ++kk) {
         const int & nei_type = sel_nei[kk].type;
         int index = sel_nei[kk].index;
         if (nei_num_v[nei_type] < sec_a[nei_type+1]) {
