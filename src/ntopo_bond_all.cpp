@@ -21,7 +21,7 @@
 #include "output.h"
 #include "thermo.h"
 #include "update.h"
-
+#include "comm.h"
 using namespace LAMMPS_NS;
 
 #define DELTA 10000
@@ -37,9 +37,9 @@ NTopoBondAll::NTopoBondAll(LAMMPS *lmp) : NTopo(lmp)
 
 void NTopoBondAll::build()
 {
-  utils::logmesg(lmp, "NTopoBondAll::build\n");
+  if(DEBUG_MSG) utils::logmesg(lmp, "NTopoBondAll::build\n");
 
-  utils::logmesg_arry(lmp, "num_bond", atom->num_bond, atom->nlocal, 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, "num_bond", atom->num_bond, atom->nlocal, 1);
 
   int i, m, atom1;
 

@@ -146,7 +146,8 @@ void FixDPLR::setup_pre_force(int vflag){
   int max_nloc, max_nall;
   atom->setMaxNum(max_nloc, max_nall);
 
-  if(comm->me == 0) utils::logmesg(lmp, "[INFO] setup_pre_force param max_nloc {} max_nall {}\n",  max_nloc,  max_nall);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] setup_pre_force param max_nloc {} max_nall {}\n",  max_nloc,  max_nall);
+
 
   // for(int _tid = 0; _tid < comm->nthreads; _tid++){
   //   deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
@@ -225,7 +226,7 @@ FixDPLR::init_valid_pairs()
 void FixDPLR::post_integrate()
 {
   // double **x = atom->x;
-  // double **v = atom->v;
+  double **v = atom->v;
   // int *type = atom->type;
   // int nlocal = atom->nlocal;
   // int nghost = atom->nghost;
@@ -234,20 +235,17 @@ void FixDPLR::post_integrate()
   // vector<pair<int,int> > validbd_pairs;
   // get_validbd_pairs(validbd_pairs);  
 
-  
-  // for (int ii = 0; ii < validbd_pairs.size(); ++ii){
-  //   int idx0 = validbd_pairs[ii].first;
-  //   int idx1 = validbd_pairs[ii].second;
-  //   for (int dd = 0; dd < 3; ++dd){
-  //     // v[idx1][dd] = v[idx0][dd] ;
-  //   }
-  // }
+  for (int ii = 0; ii < nbd_pairs; ++ii){
+    int idx0 = bd_pairs[ii].first;
+    int idx1 = bd_pairs[ii].second;
+    for (int dd = 0; dd < 3; ++dd){
+      v[idx1][dd] = v[idx0][dd] ;
+    }
+  }
 }
 
 void FixDPLR::pre_force(int vflag)
 {
-
-  // printf("\n\n*************** fix preforce ntimestep %ld *****************\n", update->ntimestep);fflush(stdout);
 
     // double **x = atom->x;
   int *type = atom->type;
@@ -264,108 +262,12 @@ void FixDPLR::pre_force(int vflag)
       }
     }
   }
-
-  // #pragma omp parallel
-  // {
-  //   int tid = omp_get_thread_num();
-
-  //   deep_pots_dipole[tid]->splite_atom();
-  // }
-
-  // #pragma omp parallel
-  // {
-  //   int tid = omp_get_thread_num();
-  //   deep_pots[tid]->splite_atom(0);
-  // }
-
-  // printf("[INFO] fiish splite_atom \n");fflush(stdout);
-  
-  // // declear inputs
-  // vector<int > dtype (nall);
-  // vector<FLOAT_PREC > dbox (9, 0) ;
-  // vector<FLOAT_PREC > dcoord (nall * 3, 0.);
-  // // get type
-  // for (int ii = 0; ii < nall; ++ii){
-  //   dtype[ii] = type[ii] - 1;
-  // }  
-  // // get box
-  // dbox[0] = domain->h[0];	// xx
-  // dbox[4] = domain->h[1];	// yy
-  // dbox[8] = domain->h[2];	// zz
-  // dbox[7] = domain->h[3];	// zy
-  // dbox[6] = domain->h[4];	// zx
-  // dbox[3] = domain->h[5];	// yx
-  // // get coord
-  // for (int ii = 0; ii < nall; ++ii){
-  //   for (int dd = 0; dd < 3; ++dd){
-  //     dcoord[ii*3+dd] = x[ii][dd] - domain->boxlo[dd];
-  //   }
-  // }
-  // // get lammps nlist
-  // NeighList * list = pair_deepmd->list;
-  // InputNlist lmp_list (list->inum, list->ilist, list->numneigh, list->firstneigh);
-  // // declear output
-  // vector<FLOAT_PREC> tensor;
-  // // compute
-
-  // printf("[INFO] FixDPLR::pre_force %d \n", 0); fflush(stdout);
-
-  // // dpt.compute(tensor, dcoord, dtype, dbox, nghost, lmp_list);
-
-  // #pragma omp parallel
-  // {
-  //   int tid = omp_get_thread_num();
-  //   double *parallel_dforce = atom->f[0] + tid * nall * 3;
-  //   deep_pots[tid]->compute(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid], 1);
-  // }
-
-  // // selected type
-  // vector<int> dpl_type;
-  // for (int ii = 0; ii < dipole_sel_type.size(); ++ii) {
-  //   dpl_type.push_back(type_asso[dipole_sel_type[ii]]);
-  // }
-
-  // utils::logmesg_arry(lmp, "[INFO] fix_dplr dpl_type", dpl_type.data(), dpl_type.size(), 1);
-
-  // vector<int> sel_fwd, sel_bwd;
-  // int sel_nghost;
-  // deepmd::select_by_type(sel_fwd, sel_bwd, sel_nghost, dcoord, dtype, nghost, dipole_sel_type);
-  // int sel_nall = sel_bwd.size();
-  // int sel_nloc = sel_nall - sel_nghost;
-  // vector<int> dipole_sel_type(sel_bwd.size());
-  // deepmd::select_map<int>(dipole_sel_type, dtype, sel_fwd, 1);
-  
-  // // Yixiao: because the deeptensor already return the correct order, the following map is no longer needed
-  // // deepmd::AtomMap<FLOAT_PREC> atom_map(dipole_sel_type.begin(), dipole_sel_type.begin() + sel_nloc);
-  // // const vector<int> & sort_fwd_map(atom_map.get_fwd_map());
-
-  // vector<pair<int,int> > validbd_pairs;
-  // get_validbd_pairs(validbd_pairs);  
-
-  // // if (comm->me == 0) utils::logmesg(lmp,"[INFO] FixDPLR::pre_force size {} \n", validbd_pairs.size());
-  
-  
-  // int odim = dpt.output_dim();
-  // assert(odim == 3);
-  // dipole_recd.resize(nall * 3);
-  // fill(dipole_recd.begin(), dipole_recd.end(), 0.0);
-  // for (int ii = 0; ii < validbd_pairs.size(); ++ii){
-  //   int idx0 = validbd_pairs[ii].first;
-  //   int idx1 = validbd_pairs[ii].second;
-  //   assert(idx0 < sel_fwd.size()); // && sel_fwd[idx0] < sort_fwd_map.size());
-  //   int res_idx = sel_fwd[idx0];
-  //   for (int dd = 0; dd < 3; ++dd) {
-  //     dipole_recd[idx0*3+dd] = tensor[res_idx * 3 + dd];
-  //   }
-  // }
-  // printf("\n**************finish pre_force******************\n");fflush(stdout);
-
 }
 
 
 void FixDPLR::post_force(int vflag)
 {
-  printf("\n\n*************** post_force ntimestep %ld *****************\n", update->ntimestep); fflush(stdout);
+  if(DEBUG_MSG) utils::logmesg(lmp, "\n\n*************** post_force ntimestep {} *****************\n", update->ntimestep);
 
   if (vflag) {
     v_setup(vflag);
@@ -377,8 +279,8 @@ void FixDPLR::post_force(int vflag)
     error->all(FLERR,"atomic virial calculation is not supported by this fix\n");
   }
 
-  printf("FixDPLR vflag %d \n", vflag); fflush(stdout);
-  printf("FixDPLR evflag %d \n", evflag); fflush(stdout);
+  // printf("FixDPLR vflag %d \n", vflag); fflush(stdout);
+  // printf("FixDPLR evflag %d \n", evflag); fflush(stdout);
 
   double *fele = pppm_dplr->fele;
   int nlocal = atom->nlocal;
@@ -444,7 +346,9 @@ void FixDPLR::post_force(int vflag)
 
     // deep_pots_dipole[tid]->splite_atom();
 
-    #pragma omp barrier
+    // #pragma omp barrier
+
+    memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
 
     deep_pots_dipole[tid]->shuffer_dextf(bd_idx, fele);
     double *parallel_dforce = pppm_dplr->f_lr[0] + tid * nall * 3;
@@ -495,7 +399,7 @@ void FixDPLR::post_force(int vflag)
   if (vflag) {
     memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
 
-    for(int ii = 0;ii < comm->nthreads; ii++){
+    for(int ii = 0; ii < comm->nthreads; ii++){
       for(int jj = 0; jj < 3 * nlocal; jj++) 
         dipole_recd[jj] += thread_dipole_recd[ii][jj];
     }  
@@ -507,6 +411,10 @@ void FixDPLR::post_force(int vflag)
     //     dipole_recd[idx0*3+dd] = thread_dipole_recd[0][idx0*3+dd];
     //   }
     // }
+
+    for(int ii = 0; ii < comm->nthreads; ii++){
+      if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force thread_dipole_recd tid {} ", ii),thread_dipole_recd[ii], 3*nlocal, 1 );
+    }
 
     if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dipole_recd \n"),dipole_recd, 3*nlocal, 1 );
 
@@ -543,7 +451,7 @@ void FixDPLR::post_force(int vflag)
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] post_force fix  virial finial \n"),virial, 6, 1);
 
-  printf("\n********************************\n");fflush(stdout);
+  if(DEBUG_MSG) utils::logmesg(lmp, "\n********************************\n");
 }
 
 

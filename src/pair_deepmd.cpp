@@ -720,7 +720,7 @@ void PairDeepMD::coeff(int narg, char **arg)
     utils::bounds(FLERR,arg[0],1,atom->ntypes,ilo,ihi,error);
     utils::bounds(FLERR,arg[1],1,atom->ntypes,jlo,jhi,error);
     if (ilo != 1 || jlo != 1 || ihi != n || jhi != n) {
-      error->all(FLERR,"deepmd requires that the scale should be set to all atom types, i.e. pair_coeff * *.");
+      if(comm->me == 0) error->all(FLERR,"deepmd requires that the scale should be set to all atom types, i.e. pair_coeff * *.");
     }
   }  
   for (int i = ilo; i <= ihi; i++) {
@@ -730,7 +730,7 @@ void PairDeepMD::coeff(int narg, char **arg)
       if (i > numb_types || j > numb_types) {
         char warning_msg[1024];
         sprintf(warning_msg, "Interaction between types %d and %d is set with deepmd, but will be ignored.\n Deepmd model has only %d types, it only computes the mulitbody interaction of types: 1-%d.", i, j, numb_types, numb_types);
-        error->warning(FLERR, warning_msg);
+        if(comm->me == 0) error->warning(FLERR, warning_msg);
       }
     }
   }
@@ -761,7 +761,7 @@ double PairDeepMD::init_one(int i, int j)
   if (i > numb_types || j > numb_types) {
     char warning_msg[1024];
     sprintf(warning_msg, "Interaction between types %d and %d is set with deepmd, but will be ignored.\n Deepmd model has only %d types, it only computes the mulitbody interaction of types: 1-%d.", i, j, numb_types, numb_types);
-    error->warning(FLERR, warning_msg);
+    if(comm->me == 0) error->warning(FLERR, warning_msg);
   }
 
   if (setflag[i][j] == 0) scale[i][j] = 1.0;

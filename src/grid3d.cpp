@@ -464,8 +464,8 @@ void Grid3d::initialize()
   fullzlo = outzlo;
   fullzhi = outzhi;
 
-  utils::logmesg(lmp, "[INFO] grid3d out  {}-{} {}-{} {}-{} \n",  outxlo,outxhi,outylo,outyhi,outzlo,outzhi);
-  utils::logmesg(lmp, "[INFO] grid3d full  {}-{} {}-{} {}-{} \n", fullxlo,fullxhi,fullylo,fullyhi,fullzlo,fullzhi);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] grid3d out  {}-{} {}-{} {}-{} \n",  outxlo,outxhi,outylo,outyhi,outzlo,outzhi);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] grid3d full  {}-{} {}-{} {}-{} \n", fullxlo,fullxhi,fullylo,fullyhi,fullzlo,fullzhi);
 
 
   // initialize data structs

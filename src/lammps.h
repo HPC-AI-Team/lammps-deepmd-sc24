@@ -19,6 +19,8 @@
 // #include "deepmd_util.h"
 
 #define DEBUG_MSG comm->debug_flag
+#define DEBUG_DP  comm->debug_dp_flag
+
 #define T_THREAD 12
 #define NUMA_NUM 4
 #define TNI_NUM 6

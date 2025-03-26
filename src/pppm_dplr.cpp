@@ -866,18 +866,18 @@ void PPPMDPLR::compute(int eflag, int vflag)
   // return gradients (electric fields) in 3d brick decomposition
   // also performs per-atom calculations via poisson_peratom()
 
-  utils::logmesg(lmp,"[INFO] begin test poisson\n");
+  if(DEBUG_MSG) utils::logmesg(lmp,"[INFO] begin test poisson\n");
 
-  if(FFT_LIB_TYPE == FFT_UTOFU_NODE) fft_utofu->blas_time = fft_utofu->comm_time = 0.;
-  MPI_Barrier(MPI_COMM_WORLD);
-  double time = MPI_Wtime();
+  // if(FFT_LIB_TYPE == FFT_UTOFU_NODE) fft_utofu->blas_time = fft_utofu->comm_time = 0.;
+  // MPI_Barrier(MPI_COMM_WORLD);
+  // double time = MPI_Wtime();
   // for(int iter = 0; iter < 1000; iter++) {
     poisson();
   // }
-  time = MPI_Wtime() - time;
-  utils::logmesg(lmp,"[INFO] poission time {} \n", time);
-  if(FFT_LIB_TYPE == FFT_UTOFU_NODE)
-    utils::logmesg(lmp,"[INFO] poission utofu blas time {} comm time {}\n", fft_utofu->blas_time, fft_utofu->comm_time);
+  // time = MPI_Wtime() - time;
+  // utils::logmesg(lmp,"[INFO] poission time {} \n", time);
+  // if(FFT_LIB_TYPE == FFT_UTOFU_NODE)
+  //   utils::logmesg(lmp,"[INFO] poission utofu blas time {} comm time {}\n", fft_utofu->blas_time, fft_utofu->comm_time);
 
 
   // utils::logmesg(lmp,"[INFO] finish poisson \n"); MPI_Barrier(MPI_COMM_WORLD);
@@ -888,7 +888,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
   if(FFT_LIB_TYPE == FFT_MPI_PROC || FFT_LIB_TYPE == FFT_HEFFTE_PROC){
     gc->forward_comm(Grid3d::KSPACE, this, FORWARD_IK, 3, sizeof(FFT_SCALAR),
                      gc_buf1, gc_buf2, MPI_FFT_SCALAR);
-  } else if(FFT_LIB_TYPE == FFT_UTOFU_NODE || FFT_LIB_TYPE == FFT_HEFFTE_NODE){
+  } else if(FFT_LIB_TYPE == FFT_UTOFU_NODE || FFT_LIB_TYPE == FFT_HEFFTE_NODE) {
     forward_node();
   }
   // utils::logmesg(lmp,"[INFO] finish forward_node \n"); MPI_Barrier(MPI_COMM_WORLD);
@@ -912,7 +912,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
     MPI_Scatterv(fele_node, recvcounts, displs, MPI_DOUBLE, fele,  atom->nlocal * 3, MPI_DOUBLE, (NUMA_NUM - 1), comm->node_comm);
   }
 
-  utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele \n"), fele, atom->nlocal * 3, 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele \n"), fele, atom->nlocal * 3, 1);
   // utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele_node \n"), fele_node, nlocal_node * 3, 1);
 
 
@@ -978,8 +978,8 @@ void PPPMDPLR::compute(int eflag, int vflag)
 
   if (triclinic) domain->lamda2x(atom->nlocal);
 
-  utils::logmesg(lmp,"[INFO] PPPMDPLR energy  {} \n", energy);
-  utils::logmesg_arry(lmp,fmt::format("[info] pppmdplr  virial finial \n"),virial, 6, 1);
+  if(DEBUG_MSG) utils::logmesg(lmp,"[INFO] PPPMDPLR energy  {} \n", energy);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] pppmdplr  virial finial \n"),virial, 6, 1);
 }
 
 
@@ -1020,7 +1020,7 @@ void PPPMDPLR::reverse_node(){
       for (int i = 0; i < nunpack; i++)
         src[list[i]] += recv_buf[i];
     }
-    utils::logmesg(lmp, "[INFO] PPPM finish reverse_node \n");
+    if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] PPPM finish reverse_node \n");
   }
 }
 
@@ -1072,7 +1072,7 @@ void PPPMDPLR::forward_node(){
         zsrc[list[i]] = recv_buf[n++];
       }
     }
-    utils::logmesg(lmp, "[INFO] PPPM finish forward_node \n");
+    if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] PPPM finish forward_node \n");
   }
 }
 

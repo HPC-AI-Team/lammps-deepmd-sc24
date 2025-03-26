@@ -174,12 +174,15 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
 
   }
 
-  deepmd_flag = debug_flag = fp16_flag = false;
+  deepmd_flag = debug_flag = debug_dp_flag = fp16_flag = false;
   tabulate_flag = 5;
   fft_type_flag = 0;
 
   if (getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1) {
     debug_flag = true;
+  }
+  if (getenv("COMM_DEBUG_DP_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_DP_FLAG")) == 1) {
+    debug_dp_flag = true;
   }
   if (getenv("DEEPMD_FLAG") != nullptr && atoi(getenv("DEEPMD_FLAG")) == 1) {
     deepmd_flag = true;
@@ -196,6 +199,7 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
 
   if (me == 0){
     utils::logmesg(lmp,"  COMM_DEBUG_FLAG {} \n",debug_flag);
+    utils::logmesg(lmp,"  COMM_DEBUG_DP_FLAG {} \n",debug_dp_flag);
     utils::logmesg(lmp,"  DEEPMD_FLAG {} \n",deepmd_flag);
     utils::logmesg(lmp,"  TEST_FP16 {} \n",fp16_flag);
     utils::logmesg(lmp,"  TABULATE_FLAG {} \n",tabulate_flag);

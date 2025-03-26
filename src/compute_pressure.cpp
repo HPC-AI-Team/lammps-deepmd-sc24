@@ -28,7 +28,7 @@
 #include "pair.h"
 #include "pair_hybrid.h"
 #include "update.h"
-
+#include "comm.h"
 #include <cctype>
 #include <cstring>
 using namespace LAMMPS_NS;
@@ -327,21 +327,32 @@ void ComputePressure::virial_compute(int n, int ndiag)
   for (j = 0; j < nvirial; j++) {
     vcomponent = vptr[j];
     for (i = 0; i < n; i++) v[i] += vcomponent[i];
+
+    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute vptr \n"),vcomponent,n, 1 );
   }
 
   // sum virial across procs
 
   MPI_Allreduce(v,virial,n,MPI_DOUBLE,MPI_SUM,world);
 
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute reduce \n"),virial,n, 1 );
+
+
   // KSpace virial contribution is already summed across procs
 
   if (kspace_virial)
     for (i = 0; i < n; i++) virial[i] += kspace_virial[i];
 
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute add kpace \n"),virial,n, 1 );
+  
+
   // LJ long-range tail correction, only if pair contributions are included
 
   if (force->pair && pairflag && force->pair->tail_flag)
     for (i = 0; i < ndiag; i++) virial[i] += force->pair->ptail * inv_volume;
+
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute add ptail \n"),virial,n, 1 );
+  
 }
 
 /* ---------------------------------------------------------------------- */

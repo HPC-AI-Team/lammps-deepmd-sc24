@@ -173,9 +173,14 @@ void Verlet::setup(int flag)
   if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
 
 
+
+
   modify->setup(vflag);
   output->setup(flag);
   update->setupflag = 0;
+
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after modify atom->v \n"), atom->v[0], atom->nlocal * 3, 1);
+
 
   if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
 
@@ -320,7 +325,7 @@ void Verlet::run(int n)
     // reverse communication of forces
 
     timer->stamp();
-
+\
     if (force->newton) {
       comm->reverse_comm();
       timer->stamp(Timer::COMM);
@@ -340,6 +345,9 @@ void Verlet::run(int n)
     modify->final_integrate();
     if (n_end_of_step) modify->end_of_step();
     timer->stamp(Timer::MODIFY);
+
+    if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after modify atom->v \n"), atom->v[0], atom->nlocal * 3, 1);
+
 
     // all output
 
