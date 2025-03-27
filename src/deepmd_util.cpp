@@ -1589,26 +1589,40 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   // MPI_Finalize();
 }
 
-
-// dforce_为 parallel_force
-void DeepPot::compute (ENERGYTYPE *			dener_,
-  double*	dforce_,
-  double*	dvirial_) {
- 
-  dener = 0;
-
-  
-  //  切换模式
-
-  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
-
+void DeepPot::compute_dipole_R_grad () {
+  // fwd_map，存放 real atom在新的表里的位置
+  // bkw_map，存放 所有的 real atom
+    // get Descriptor
 
   if (nloc == 0) {
-    if(MODEL_TYPE == ENER_TYPE){
-      *dener_ = 0;
-    } else if(MODEL_TYPE == DIPOLE_TYPE) {
-      memset(dener_, 0, sizeof(double) * 3 * nloc);
-    }
+    return;
+  }
+
+  int sess_ntypes = dipole_sel_type.size();
+
+  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+    prod_R_matrix(type_i);
+  }  
+  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+    embedding_net(type_i);
+  }  
+
+  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+    fitting_net_dipole_R_grad(type_i);
+  }
+
+  return;
+}
+
+void DeepPot::compute_dipole (ENERGYTYPE *			dener_,
+  double*	dforce_,
+  double*	dvirial_) {
+
+  dener = 0;
+  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
+
+  if (nloc == 0) {
+    memset(dener_, 0, sizeof(double) * 3 * nloc);
     memset(dvirial_, 0, 9 * sizeof(double));
     return;
   }
@@ -1618,28 +1632,65 @@ void DeepPot::compute (ENERGYTYPE *			dener_,
 
   // fwd_map，存放 real atom在新的表里的位置
   // bkw_map，存放 所有的 real atom
-  session_run();
 
-  if(MODEL_TYPE == ENER_TYPE){
-    *dener_ = dener;
-  } else if(MODEL_TYPE == DIPOLE_TYPE) {
-    memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
-
-    atommap.backward (ori_dipole, layer_final_qmat, 3);
-
-    for(int local_index = 0; local_index < nloc; local_index++) {
-      int global_index = backward_index_map[local_index];
-      dener_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
-      dener_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
-      dener_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
-    }
-
-    if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force layer_final_qmat \n"),layer_final_qmat, 3*nloc, 1 );
-    if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force ori_dipole \n"),ori_dipole, 3*nloc, 1 );
-    if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force dener_ \n"),dener_, 3*nloc, 1 );
-
-
+  for(int type_i = 0; type_i < dipole_sel_type.size(); type_i++) {
+    fitting_net_dipole_prod_force(type_i);
   }
+
+  if(DEBUG_DP) if(tid == 0)  print_v(nloc * 3, fmt::format("prod_force_a_cpu dforce \n"), dforce);
+  if(DEBUG_DP) if(tid == 0)  print_v(9, fmt::format("prod_force_a_cpu dvirial \n"), dvirial);
+
+  memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
+
+  atommap.backward (ori_dipole, layer_final_qmat, 3);
+
+  for(int local_index = 0; local_index < nloc; local_index++) {
+    int global_index = backward_index_map[local_index];
+    dener_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
+    dener_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
+    dener_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
+  }
+
+  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force layer_final_qmat \n"),layer_final_qmat, 3*nloc, 1 );
+  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force ori_dipole \n"),ori_dipole, 3*nloc, 1 );
+  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force dener_ \n"),dener_, 3*nloc, 1 );
+
+  memcpy(ori_dforce, dforce, nall * 3 * sizeof(double));
+  memcpy(dvirial_, dvirial, 9 * sizeof(double));
+  atommap.backward (ori_dforce, dforce, 3);
+  
+  // backward会原本的排布
+  for(int local_index = 0; local_index < nall; local_index++) {
+    int global_index = backward_index_map[local_index];
+    dforce_[global_index * 3 + 0] = ori_dforce[local_index * 3 + 0];
+    dforce_[global_index * 3 + 1] = ori_dforce[local_index * 3 + 1];
+    dforce_[global_index * 3 + 2] = ori_dforce[local_index * 3 + 2];
+  }
+}
+
+// dforce_为 parallel_force
+void DeepPot::compute_ener (ENERGYTYPE *			dener_,
+  double*	dforce_,
+  double*	dvirial_) {
+ 
+  dener = 0;
+  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
+
+
+  if (nloc == 0) {
+    *dener_ = 0;
+    memset(dvirial_, 0, 9 * sizeof(double));
+    return;
+  }
+
+  memset(dforce, 0, sizeof(double) * 3 * nall);
+  memset(dvirial, 0, sizeof(double) * 9);
+
+  // fwd_map，存放 real atom在新的表里的位置
+  // bkw_map，存放 所有的 real atom
+  session_run_ener();
+
+  *dener_ = dener;
 
   memcpy(ori_dforce, dforce, nall * 3 * sizeof(double));
   memcpy(dvirial_, dvirial, 9 * sizeof(double));
@@ -1758,7 +1809,7 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
   if(DEBUG_DP) if(tid == 0) print_v(nall * 3, fmt::format("dcoord   {} :: ", nall * 3), dcoord);
   
   // return;
-  session_run();
+  session_run_ener();
 
   dener_ = dener;
   memcpy(dforce_, dforce, nall * 3 * sizeof(double));
@@ -1771,23 +1822,17 @@ void DeepPot::compute (ENERGYTYPE &			dener_,
 }
 
 
-void DeepPot::session_run () {
+void DeepPot::session_run_ener () {
   // get Descriptor
-
-  int sess_ntypes = (MODEL_TYPE == DIPOLE_TYPE) ? dipole_sel_type.size() : ntypes;
-
-  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+  for(int type_i = 0; type_i < ntypes; type_i++) {
     prod_R_matrix(type_i);
   }  
-  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+  for(int type_i = 0; type_i < ntypes; type_i++) {
     embedding_net(type_i);
-  }  
+  }
 
-  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
-    if((MODEL_TYPE == DIPOLE_TYPE))
-      fitting_net_dipole(type_i);
-    else
-      fitting_net_normal(type_i);
+  for(int type_i = 0; type_i < ntypes; type_i++) {
+    fitting_net_normal(type_i);
   }
 
   if(DEBUG_DP) if(tid == 0)  print_v(nloc * 3, fmt::format("prod_force_a_cpu dforce \n"), dforce);
@@ -1795,6 +1840,7 @@ void DeepPot::session_run () {
   // if(DEBUG_DP) if(tid == 0)  print_v(nloc * 3, fmt::format("dforce \n"), dforce);
   return;
 }
+
 
 void DeepPot::embedding_net(int type_i) {
   if(type_natoms[type_i] == 0) return;
@@ -1858,7 +1904,7 @@ void DeepPot::embedding_net(int type_i) {
 }
 
 
-void DeepPot::fitting_net_dipole(int type_i) {
+void DeepPot::fitting_net_dipole_R_grad(int type_i) {
   if(type_natoms[type_i] == 0) return;
 
   t_timer->stamp();
@@ -2037,6 +2083,10 @@ void DeepPot::fitting_net_dipole(int type_i) {
       t_timer->stamp(Timer::PROD_FV);
     }
   }
+}
+
+void DeepPot::fitting_net_dipole_prod_force(int type_i) {
+  if(type_natoms[type_i] == 0) return;
 
   for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
     int t_ptr = type_i * ntypes + type_i_in;

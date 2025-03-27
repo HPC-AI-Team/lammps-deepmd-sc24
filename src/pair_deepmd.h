@@ -74,7 +74,8 @@ public:
   DeepPot **deep_pots_dipole;
 
   int numb_types;
-  
+  int dipole_flag; 
+
 private:  
   int first_time[T_THREAD] = {0};
   int num_threads = 1;

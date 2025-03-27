@@ -148,14 +148,6 @@ void FixDPLR::setup_pre_force(int vflag){
 
   if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] setup_pre_force param max_nloc {} max_nall {}\n",  max_nloc,  max_nall);
 
-
-  // for(int _tid = 0; _tid < comm->nthreads; _tid++){
-  //   deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
-  // }  
-  // memory->create(pppm_dplr->f_lr,         atom->nmax * comm->nthreads, 3, "pppm_dplr->f_lr");
-  // memory->create(pppm_dplr->fele,         max_nloc * 3, "pppm_dplr->fele");
-  // memory->create(pppm_dplr->fele_node,    max_nloc * 3 * NUMA_NUM, "pppm_dplr->fele");
-
   memory->create(dvirial,               9,"fix_dplr:dvirial");
   memory->create(thread_dvirial,        comm->nthreads, 9,"fix_dplr:thread_dvirial");
   memory->create(dipole_recd,           max_nloc * 3, "fix_dplr::thread_dener");
@@ -287,56 +279,8 @@ void FixDPLR::post_force(int vflag)
   int nghost = atom->nghost;
   int nall = nlocal + nghost;
 
-  // if(neighbor->ago == 0) {
-  //   init_valid_pairs();
-  //   atom->nlocal_real = 0;
-  //   for(int i = 0; i < nlocal; i++) {
-  //     if(atom->type[i] <= ntypes)  {
-  //       atom->nlocal_real++;
-  //     }
-  //   }
-  // }
-
-  // PPPMDPLR * pppm_dplr = (PPPMDPLR*) force->kspace_match("pppm/dplr", 1);
-  // if (!pppm_dplr) {
-  //   error->all(FLERR,"kspace_style pppm/dplr should be set before this fix\n");
-  // }
-  // const vector<double > & dfele_(pppm_dplr->get_fele());
-
-
-
   // revise force and virial according to efield
   double * q = atom->q;
-  double v[6];
-  efield_fsum[0] = efield_fsum[1] = efield_fsum[2] = efield_fsum[3] = 0.0;
-  efield_force_flag = 0;
-
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force atom->q  \n"),q, nlocal, 1 );
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force efield  \n"),efield, 3, 1 );
-  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force fele before \n"),fele, 3*nlocal, 1 );
-
-  for (int ii = 0; ii < nlocal; ++ii){
-    double tmpf[3];
-    for (int dd = 0; dd < 3; ++dd){
-      tmpf[dd] = q[ii] * efield[dd];
-    }
-    for (int dd = 0; dd < 3; ++dd){
-      fele[ii*3+dd] += tmpf[dd];
-    }
-    efield_fsum[0] -= tmpf[0]*atom->x[ii][0]+tmpf[1]*atom->x[ii][1]+tmpf[2]*atom->x[ii][2];
-    efield_fsum[1] += tmpf[0];
-    efield_fsum[2] += tmpf[1];
-    efield_fsum[3] += tmpf[2];
-    if (evflag) {
-      v[0] = tmpf[0] * atom->x[ii][0];
-      v[1] = tmpf[1] * atom->x[ii][1];
-      v[2] = tmpf[2] * atom->x[ii][2];
-      v[3] = tmpf[0] * atom->x[ii][1];
-      v[4] = tmpf[0] * atom->x[ii][2];
-      v[5] = tmpf[1] * atom->x[ii][2];
-      v_tally(ii, v);
-    }
-  }
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force fele after \n"),fele, 3*nlocal, 1 );
 
@@ -353,7 +297,7 @@ void FixDPLR::post_force(int vflag)
     deep_pots_dipole[tid]->shuffer_dextf(bd_idx, fele);
     double *parallel_dforce = pppm_dplr->f_lr[0] + tid * nall * 3;
     memset(parallel_dforce, 0, sizeof(double) * nall * 3);
-    deep_pots_dipole[tid]->compute(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid]);
+    deep_pots_dipole[tid]->compute_dipole(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid]);
 
     pair_deepmd->force_reduce(&(pppm_dplr->f_lr[0][0]), nall, comm->nthreads, 3, tid, 1.);
 

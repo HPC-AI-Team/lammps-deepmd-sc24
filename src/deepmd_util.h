@@ -279,15 +279,23 @@ public:
 		const InputNlist &		inlist,
 		const int&			ago);
 
-  void compute (double *ener,
+  void compute_ener (double *ener,
 		double*	force,
 		double*	virial);
 
-  void session_run ();
+  void compute_dipole_R_grad ();
+
+  void compute_dipole (double *ener,
+		double*	force,
+		double*	virial);
+
+  void session_run_ener ();
+  void session_run_dipole ();
 
   void prod_env_mat_a();
 
-  void fitting_net_dipole(int type_i);
+  void fitting_net_dipole_R_grad(int type_i);
+  void fitting_net_dipole_prod_force(int type_i);
   void fitting_net_normal(int type_i);
   void embedding_net(int type_i);
   void prod_R_matrix(int type_i);
