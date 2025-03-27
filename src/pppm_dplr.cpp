@@ -2167,7 +2167,7 @@ void PPPMDPLR::fieldforce_ik_brick() {
 
   // fele.resize(nlocal*3);
   // fill(fele.begin(), fele.end(), 0.0);
-  memset(fele, 0, nlocal*3*sizeof(double));
+  memset(fele, 0, nlocal*3*sizeof(FPTYPE));
 
   for (i = 0; i < nlocal; i++) {
     nx = part2grid[i][0];
@@ -2294,7 +2294,7 @@ void PPPMDPLR::fieldforce_ad()
 
   // fele.resize(nlocal*3);
   // fill(fele.begin(), fele.end(), 0.0);
-  memset(fele, 0, nlocal*3*sizeof(double));
+  memset(fele, 0, nlocal*3*sizeof(FPTYPE));
 
 
   for (i = 0; i < nlocal; i++) {

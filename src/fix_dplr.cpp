@@ -282,7 +282,7 @@ void FixDPLR::post_force(int vflag)
   // printf("FixDPLR vflag %d \n", vflag); fflush(stdout);
   // printf("FixDPLR evflag %d \n", evflag); fflush(stdout);
 
-  double *fele = pppm_dplr->fele;
+  FPTYPE *fele = pppm_dplr->fele;
   int nlocal = atom->nlocal;
   int nghost = atom->nghost;
   int nall = nlocal + nghost;

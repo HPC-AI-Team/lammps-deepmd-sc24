@@ -10,7 +10,7 @@
 
 // #define _TABULATE_FITTING
 
-#define HIGH_PREC
+// #define HIGH_PREC
 
 // #define TABLE_V1
 
