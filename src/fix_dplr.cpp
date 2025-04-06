@@ -356,9 +356,9 @@ void FixDPLR::post_force(int vflag)
     //   }
     // }
 
-    for(int ii = 0; ii < comm->nthreads; ii++){
-      if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force thread_dipole_recd tid {} ", ii),thread_dipole_recd[ii], 3*nlocal, 1 );
-    }
+    // for(int ii = 0; ii < comm->nthreads; ii++){
+    //   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force thread_dipole_recd tid {} ", ii),thread_dipole_recd[ii], 3*nlocal, 1 );
+    // }
 
     if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dipole_recd \n"),dipole_recd, 3*nlocal, 1 );
 

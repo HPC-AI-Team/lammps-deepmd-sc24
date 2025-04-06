@@ -331,6 +331,13 @@ void ComputePressure::virial_compute(int n, int ndiag)
     if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute vptr \n"),vcomponent,n, 1 );
   }
 
+  // if(DEBUG_MSG){
+  //   double v_all[48][3];
+  //   MPI_Allgather(vptr[0],3, MPI_DOUBLE, v_all[0], 3, MPI_DOUBLE, MPI_COMM_WORLD); 
+  //   for(int i = 0; i < 48; i++) {
+  //     utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute force nid {}", i),v_all[i],3, 1 );
+  //   }  }
+
   // sum virial across procs
 
   MPI_Allreduce(v,virial,n,MPI_DOUBLE,MPI_SUM,world);
@@ -343,6 +350,8 @@ void ComputePressure::virial_compute(int n, int ndiag)
   if (kspace_virial)
     for (i = 0; i < n; i++) virial[i] += kspace_virial[i];
 
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute kspace_virial \n"),kspace_virial,n, 1 );
+
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute add kpace \n"),virial,n, 1 );
   
 
@@ -350,6 +359,9 @@ void ComputePressure::virial_compute(int n, int ndiag)
 
   if (force->pair && pairflag && force->pair->tail_flag)
     for (i = 0; i < ndiag; i++) virial[i] += force->pair->ptail * inv_volume;
+
+  if(DEBUG_MSG) utils::logmesg(lmp, fmt::format("ComputePressure::virial_compute ptail * inv_volume {} \n",
+    force->pair->ptail * inv_volume ));
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("ComputePressure::virial_compute add ptail \n"),virial,n, 1 );
   

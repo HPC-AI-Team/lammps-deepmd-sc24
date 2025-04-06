@@ -106,7 +106,7 @@ private:
 
   int max_nall;
   int max_nloc;
-  int max_nlist;
+  // int max_nlist;
 
   double* dvirial;
   double** thread_dvirial;

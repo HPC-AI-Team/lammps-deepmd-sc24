@@ -225,11 +225,11 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // max_nloc = _thread_atom_num;
           // max_nloc = atom->nlocal * 2;
           // max_nall = nall * 2;
-          max_nlist = nnei * 3;
+          // max_nlist = nnei * 3;
 
           atom->setMaxNum(max_nloc, max_nall);
 
-          if(comm->me == 0 || DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {} max_nlist {} atom->nlocal {}\n",  max_nloc,  max_nall, max_nlist, atom->nlocal);
+          if(comm->me == 0 || DEBUG_MSG) utils::logmesg(Pair::lmp, "PairDeepMD param max_nloc {} max_nall {}  atom->nlocal {}\n",  max_nloc,  max_nall, atom->nlocal);
           
           for(int _tid = 0; _tid < num_threads; _tid++){
             deep_pots[_tid]->reserve_buffer(max_nloc, max_nall);
@@ -277,28 +277,19 @@ void PairDeepMD::compute(int eflag, int vflag) {
       }
 
       // create_dcoord(nall, tid);
-
-      #pragma omp barrier
-
       // #pragma omp parallel  
       {
-        deep_pots_dipole[tid]->splite_atom();
-        deep_pots_dipole[tid]->compute_dipole_R_grad();
-        
-        if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish splite_atom tid {} \n", tid);
-        
-        
 
-        #pragma omp barrier
         deep_pots[tid]->splite_atom();
         deep_pots[tid]->compute_ener (&thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
-
+       
         force_reduce(&(f[0][0]), nall, nthreads, 3, tid, scale[1][1]);
-
-        
         #pragma omp barrier
 
         if(tid == 0) {
+
+          if(DEBUG_MSG) utils::logmesg_arry(Pair::lmp, fmt::format("pair_deepmd reduce force \n"),f[0],nlocal*3, 1 );
+
 
           // memset(&(f[0][0]), 0, nall * 3 * sizeof(double));
           // for(int ii = 0; ii < 12; ii++)
@@ -345,6 +336,14 @@ void PairDeepMD::compute(int eflag, int vflag) {
           // memset(atom->v[0], 0, nlocal * sizeof(double) * 3);
           // memset(dvirial, 0, sizeof(double) * 9);
         }
+
+
+        #pragma omp barrier
+
+        deep_pots_dipole[tid]->splite_atom();
+        deep_pots_dipole[tid]->compute_dipole_R_grad();
+        
+        if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish deep_pots_dipole prepare tid {} \n", tid);
       } // end omp
 
       // for(int tid = 0; tid < nthreads; tid++){

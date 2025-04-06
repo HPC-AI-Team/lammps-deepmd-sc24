@@ -19,7 +19,7 @@
 #include "neighbor.h"
 #include "pair.h"
 #include "remap_wrap.h"
-
+#include "comm_brick.h"
 using namespace LAMMPS_NS;
 using namespace MathConst;
 using namespace MathSpecial;
@@ -148,59 +148,74 @@ void FFT_UTOFU_BG::init_utofu_bg() {
   }
 
   for(int dir = 0; dir < 3; dir++) {
-    for(int tni = dir*2; tni < (dir+1)*2; tni++) {
+    int nrepeat = (comm->comm1D_size[dir] <= MAX_RING) ? 2 : 1;
+
+    for(int iter = 0; iter < nrepeat; iter++) {
       for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+        int tni = dir*2 + iter + (r / MAX_RING);
+        int bg = r % MAX_RING;
         // rc = utofu_alloc_vbg(tni, 2, 0, lcl_vbg_ids[tni][r]);
         // if (rc != UTOFU_SUCCESS) {
         //   error->one(FLERR,"utofu_alloc_vbg failed  tni {} r {} rc {} \n", tni, r, rc);
         // }
-        lcl_vbg_ids[tni][r][0] = comm->lcl_vbg_ids[tni][r][0];
-        lcl_vbg_ids[tni][r][1] = comm->lcl_vbg_ids[tni][r][1];
-        MPI_Allgather(lcl_vbg_ids[tni][r], 2, MPI_UINT64_T, rmt_vbg_ids[tni][r][0], 2, MPI_UINT64_T, comm->comm1D[dir]);
+        lcl_vbg_ids[tni][bg][0] = comm->lcl_vbg_ids[tni][bg][0];
+        lcl_vbg_ids[tni][bg][1] = comm->lcl_vbg_ids[tni][bg][1];
+        MPI_Allgather(lcl_vbg_ids[tni][bg], 2, MPI_UINT64_T, rmt_vbg_ids[tni][bg][0], 2, MPI_UINT64_T, comm->comm1D[dir]);
+
+        // utils::logmesg(lmp, "[INFO] MPI_Allgather dir {} r {} tni {} bg {} vbg_id {} {}\n", 
+        //           dir, r, tni, bg, lcl_vbg_ids[tni][bg][0],lcl_vbg_ids[tni][bg][1]);  
       }
     }
   }
 
   for(int dir = 0; dir < 3; dir++) {
-    for(int tni = dir*2; tni < (dir+1)*2; tni++) {
+    int nrepeat = (comm->comm1D_size[dir] <= MAX_RING) ? 2 : 1;
+
+    for(int iter = 0; iter < nrepeat; iter++) {
       for(int r = 0; r < comm->comm1D_size[dir]; r++) {
-        vbg_settings[tni][r][0].vbg_id = lcl_vbg_ids[tni][r][0];
-        vbg_settings[tni][r][0].src_lcl_vbg_id = lcl_vbg_ids[tni][r][1];
-        vbg_settings[tni][r][0].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
-        vbg_settings[tni][r][0].dst_lcl_vbg_id = lcl_vbg_ids[tni][r][1];
-        vbg_settings[tni][r][0].dst_rmt_vbg_id = UTOFU_VBG_ID_NULL;
-        vbg_settings[tni][r][0].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
-
-        vbg_settings[tni][r][1].vbg_id = lcl_vbg_ids[tni][r][1];
-        vbg_settings[tni][r][1].src_lcl_vbg_id = lcl_vbg_ids[tni][r][0];
-        vbg_settings[tni][r][1].src_rmt_vbg_id = rmt_vbg_ids[tni][r][pre[dir]][1];
-        vbg_settings[tni][r][1].dst_lcl_vbg_id = lcl_vbg_ids[tni][r][0];
-        vbg_settings[tni][r][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][r][nxt[dir]][1];
-        vbg_settings[tni][r][1].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
-
+        int tni = dir*2 + iter + (r / MAX_RING);
+        int bg = r % MAX_RING;
+  
+        vbg_settings[tni][bg][0].vbg_id = lcl_vbg_ids[tni][bg][0];
+        vbg_settings[tni][bg][0].src_lcl_vbg_id = lcl_vbg_ids[tni][bg][1];
+        vbg_settings[tni][bg][0].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+        vbg_settings[tni][bg][0].dst_lcl_vbg_id = lcl_vbg_ids[tni][bg][1];
+        vbg_settings[tni][bg][0].dst_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+        vbg_settings[tni][bg][0].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
+  
+        vbg_settings[tni][bg][1].vbg_id = lcl_vbg_ids[tni][bg][1];
+        vbg_settings[tni][bg][1].src_lcl_vbg_id = lcl_vbg_ids[tni][bg][0];
+        vbg_settings[tni][bg][1].src_rmt_vbg_id = rmt_vbg_ids[tni][bg][pre[dir]][1];
+        vbg_settings[tni][bg][1].dst_lcl_vbg_id = lcl_vbg_ids[tni][bg][0];
+        vbg_settings[tni][bg][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][bg][nxt[dir]][1];
+        vbg_settings[tni][bg][1].dst_path_coords[0] = UTOFU_PATH_COORD_NULL;
+  
         if(r == comm->me3d[dir]) {
-          vbg_settings[tni][r][0].src_lcl_vbg_id = UTOFU_VBG_ID_NULL;
-          vbg_settings[tni][r][0].src_rmt_vbg_id = rmt_vbg_ids[tni][r][pre[dir]][1];
-
-          vbg_settings[tni][r][1].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
-          vbg_settings[tni][r][1].dst_lcl_vbg_id = UTOFU_VBG_ID_NULL;
+          vbg_settings[tni][bg][0].src_lcl_vbg_id = UTOFU_VBG_ID_NULL;
+          vbg_settings[tni][bg][0].src_rmt_vbg_id = rmt_vbg_ids[tni][bg][pre[dir]][1];
+  
+          vbg_settings[tni][bg][1].src_rmt_vbg_id = UTOFU_VBG_ID_NULL;
+          vbg_settings[tni][bg][1].dst_lcl_vbg_id = UTOFU_VBG_ID_NULL;
         } else if(r == nxt[dir]) {
-          vbg_settings[tni][r][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][r][nxt[dir]][0];
+          vbg_settings[tni][bg][1].dst_rmt_vbg_id = rmt_vbg_ids[tni][bg][nxt[dir]][0];
         }
-
-        rc = utofu_set_vbg(vbg_settings[tni][r], 2);
+  
+        rc = utofu_set_vbg(vbg_settings[tni][bg], 2);
         if (rc != UTOFU_SUCCESS) {
           error->one(FLERR,"utofu_set_vbg failed rc {} \n",rc);
         }
-        MPI_Barrier(comm->comm1D[dir]);
-        // utils::logmesg(lmp, "[INFO] utofu_set_vbg success dir {} tni {} r {} \n", dir, tni, r);
+        // MPI_Barrier(comm->comm1D[dir]);
+
+        // utils::logmesg(lmp, "[INFO] utofu_set_vbg dir {} r {} tni {} bg {} pre {} nxt {} vbg_id {} {} \n", 
+        //           dir, r, tni, bg, pre[dir], nxt[dir], lcl_vbg_ids[tni][bg][0],lcl_vbg_ids[tni][bg][1]);  
       }
     }
   }
   MPI_Barrier(comm->numa_comm);
 }
 
-inline void print_array_2d(double *buf, int M, int N, std::string mesg, LAMMPS *lmp) {
+template<typename T>
+inline void print_array_2d(T *buf, int M, int N, std::string mesg, LAMMPS *lmp) {
   std::string tmp;
   tmp += fmt::format("[INFO] print_array_2d  {}\n", mesg.c_str());
 
@@ -259,6 +274,9 @@ inline void gather_inner_data_printf(int nfft_brick, int nnode, MPI_Comm numa_co
 void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
   FFT_SCALAR *_Wcos[3], *_Wsin[3];
 
+  // utils::logmesg(lmp, "[INFO] compute_fft3D_forward \n");
+
+
   if(FFT_DIR == 0) {
     for(int dir = 0; dir < 3; dir++) _Wcos[dir] = Wcos[dir];
     for(int dir = 0; dir < 3; dir++) _Wsin[dir] = Wsin[dir];
@@ -267,7 +285,7 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
     for(int dir = 0; dir < 3; dir++) _Wsin[dir] = Wsin_i[dir];
   }
 
-  // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+  // gather_inner_data_printf(nfft_brick, comm->nnodes, comm->numa_comm,
   //   in_data, nodegrid, lcl_size, fft_size , fft_size[0], nfft, lmp, "input data" );
 
   FFT_SCALAR *cos_out[2], *sin_out[2];
@@ -280,29 +298,45 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
     FFT_SCALAR *in_data_real = in_data;
     FFT_SCALAR *in_data_imag = in_data + nfft_brick;
 
-    double time = MPI_Wtime();
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+
+    // double time = MPI_Wtime();
+    #if 1
+    matmul_nx5_5x25_nt(fft_size[dir], nblocks[dir], lcl_size[dir],
+      _Wcos[dir], in_data_real, cos_out[0]);
+    matmul_nx5_5x25_nt(fft_size[dir], nblocks[dir], lcl_size[dir],
+      _Wsin[dir], in_data_real,  sin_out[0]);
+    matmul_nx5_5x25_nt(fft_size[dir], nblocks[dir], lcl_size[dir],
+      _Wsin[dir], in_data_imag, cos_out[1]);
+    matmul_nx5_5x25_nt(fft_size[dir], nblocks[dir], lcl_size[dir],
+      _Wcos[dir], in_data_imag,  sin_out[1]);
+
+    #else
+    fft_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
       1.0, _Wcos[dir], lcl_size[dir],
       in_data_real, lcl_size[dir],
       0.0, cos_out[0], nblocks[dir]
     );
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+    fft_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
       1.0, _Wsin[dir], lcl_size[dir],
       in_data_imag, lcl_size[dir],
       0.0, cos_out[1], nblocks[dir]
     );
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+    fft_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
       1.0, _Wsin[dir], lcl_size[dir],
       in_data_real, lcl_size[dir], 
       0.0, sin_out[0], nblocks[dir]
     );
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
+    fft_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, fft_size[dir], nblocks[dir], lcl_size[dir],
       1.0, _Wcos[dir], lcl_size[dir],
       in_data_imag, lcl_size[dir], 
       0.0, sin_out[1], nblocks[dir]
     );
+    #endif
 
-    blas_time += MPI_Wtime() - time;
+    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("cos_out blas "),cos_out[0], fft_size[dir]*nblocks[dir], 1 );
+
+
+    // blas_time += MPI_Wtime() - time;
 
     for(int i = 0; i < dgemm_size[dir]; i++) {
       cos_out[0][i] -= cos_out[1][i];
@@ -321,12 +355,12 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
     // }
     // MPI_Waitall(nrequst, requests, MPI_STATUS_IGNORE);
 
-    // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+    // gather_inner_data_printf(nfft_brick, comm->nnodes, comm->numa_comm,
     //   in_data, nodegrid, lcl_size, fft_size ,  fft_size[(dir+1)%3 ] ,nfft, lmp, fmt::format("out dir {}", dir) );
 
     // MPI_Barrier(comm->comm1D[dir]);
 
-    time = MPI_Wtime();
+    // time = MPI_Wtime();
 
     #if 0
     for(int itype = 0; itype < 2; itype++) {
@@ -360,50 +394,67 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
     }
     #else 
     for(int itype = 0; itype < 2; itype++) {
-      double *_in_buf = in_data + itype * nfft_brick;
-      for(int p = 0; p < max_nfft_brick[dir]; p+=12) {
-        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
-          int size = nfft_bricks[dir][r] - p;
-          if(size <= 0) continue;
-          if(size > 12) size = 12;
-          int _data[12] ;
-          double *_out_buf = itype == 0 ? &cos_out[0][nfft_bricks_offset[dir][r]] : &sin_out[0][nfft_bricks_offset[dir][r]];
-          for(int i = 0; i < size; i++) _data[i] = _out_buf[p+i] * 1e7;
-          utofu_reduce_uint64(lcl_vbg_ids[dir*2+0][r][0], UTOFU_REDUCE_OP_SUM, 
-                  (uint64_t*)_data, std::ceil(size/2.0), 0);
+      FFT_SCALAR *_in_buf = in_data + itype * nfft_brick;
+
+      // 判断是否超过一个tni限额
+      int nrepeat = (comm->comm1D_size[dir] <= MAX_RING) ? 2 : 1;
+      int step = nrepeat * 12;
+      for(int p = 0; p < max_nfft_brick[dir]; p+=step) {
+        for(int iter = 0; iter < nrepeat; iter++) {
+          for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+            int tni = dir*2 + iter + (r / MAX_RING);
+            int bg = r % MAX_RING;
+
+            int size = nfft_bricks[dir][r] - p - 12 * iter;
+            if(size <= 0) continue;
+            if(size > 12) size = 12;
+            int _data[12] ;
+            FFT_SCALAR *_out_buf = itype == 0 ? &cos_out[0][nfft_bricks_offset[dir][r]] : &sin_out[0][nfft_bricks_offset[dir][r]];
+            for(int i = 0; i < size; i++) _data[i] = _out_buf[p+i+12*iter] * 1e7;
+            utofu_reduce_uint64(lcl_vbg_ids[tni][bg][0], UTOFU_REDUCE_OP_SUM, 
+                    (uint64_t*)_data, (int)std::ceil(size/2.0), 0);
+
+            // utils::logmesg(lmp, "[INFO] utofu_reduce_uint64 dir {} r {} tni {} bg {} vbg {} {} size {}\n", 
+            //       dir, r, tni, bg, lcl_vbg_ids[tni][bg][0],lcl_vbg_ids[tni][bg][1], (int)std::ceil(size/2.0));
+          }
         }
 
-        for(int r = 0; r < comm->comm1D_size[dir]; r++) {
-          int size = nfft_bricks[dir][r] - p;
-          if(size <= 0) continue;
-          if(size > 12) size = 12;
-          int nerr = 0;
-          double _reduce_data[3];
-          int _data[12] ;
-          do {
-            rc = utofu_poll_reduce_uint64(lcl_vbg_ids[dir*2][r][0], 0, (uint64_t*)_data);
-          } while (rc == UTOFU_ERR_NOT_COMPLETED);
-          if(rc != UTOFU_SUCCESS) error->one(FLERR,"utofu_poll_reduce_double fail {} ", rc);
+        for(int iter = 0; iter < nrepeat; iter++) {
+          for(int r = 0; r < comm->comm1D_size[dir]; r++) {
+            int tni = dir*2 + iter + (r / MAX_RING);
+            int bg = r % MAX_RING;
 
-          if(r == comm->me3d[dir]) {
-            for(int i = 0; i < size; i++) _in_buf[p+i] = _data[i] * (1. / 1e7); 
-          };
+            int size = nfft_bricks[dir][r] - p - 12 * iter;
+            if(size <= 0) continue;
+            if(size > 12) size = 12;
+            int _data[12] ;
+            do {
+              rc = utofu_poll_reduce_uint64(lcl_vbg_ids[tni][bg][0], 0, (uint64_t*)_data);
+            } while (rc == UTOFU_ERR_NOT_COMPLETED);
+            if(rc != UTOFU_SUCCESS) error->one(FLERR,"utofu_poll_reduce_double fail {} ", rc);
+
+            if(r == comm->me3d[dir]) {
+              for(int i = 0; i < size; i++) _in_buf[p+i+12*iter] = _data[i] * (1. / 1e7); 
+            };
+            // utils::logmesg(lmp, "[INFO] utofu_poll_reduce_uint64 dir {} r {} tni {} bg {} vbg {} {}\n", 
+            //           dir, r, tni, bg, lcl_vbg_ids[tni][bg][0],lcl_vbg_ids[tni][bg][1]);
+
+          }
         }
       }
     }
 
-
     #endif
 
-    comm_time += MPI_Wtime() - time;
+    // comm_time += MPI_Wtime() - time;
 
     // utils::logmesg_arry(lmp, fmt::format("PPPMDPLR result dir {} \n", dir),in_data,2*nfft_brick, 1 );
 
   }
 
-  // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+  // gather_inner_data_printf(nfft_brick, comm->nnodes, comm->numa_comm,
   //   in_data, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir real {}", 0) );
-  // gather_inner_data_printf(nfft_brick, comm->nnode, comm->numa_comm,
+  // gather_inner_data_printf(nfft_brick, comm->nnodes, comm->numa_comm,
   //   in_data+nfft_brick, nodegrid, lcl_size, fft_size ,  fft_size[0] ,nfft, lmp, fmt::format("forward out dir imag {}", 0) );
 }
 
@@ -412,14 +463,21 @@ void FFT_UTOFU_BG::compute_fft3D_forward(FFT_SCALAR *in_data, int FFT_DIR) {
 PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
   PPPM(lmp)
 {
+  first_setup = 0;
+  first_init = 0;
+
+
   first_time = 0;
   triclinic_support = 1;
   x_node = nullptr;
+  q_node = nullptr;
   part2grid_node = nullptr;
   vg_brick = nullptr;
   fkx_brick = nullptr; fky_brick = nullptr; fkz_brick = nullptr;
   work1_node = work2_node = nullptr;
   fft_utofu = nullptr;
+
+  FFT_LIB_TYPE = 0;
 
   if (getenv("FFT_TYPE_FLAG") != nullptr ) {
     FFT_LIB_TYPE = atoi(getenv("FFT_TYPE_FLAG"));
@@ -436,6 +494,8 @@ PPPMDPLR::PPPMDPLR(LAMMPS *lmp) :
 
 void PPPMDPLR::init()
 {
+  if(first_init == 1) return;
+  first_init = 1;
   // DPLR PPPM requires newton on, b/c it computes forces on ghost atoms
 
   if (force->newton == 0)
@@ -453,14 +513,18 @@ void PPPMDPLR::init()
   if(FFT_LIB_TYPE == FFT_UTOFU_NODE || FFT_LIB_TYPE == FFT_HEFFTE_NODE) {
     init_node_fft();
 
+    if(DEBUG_MSG) {utils::logmesg(lmp, "[INFO] finish init_node_fft \n"); MPI_Barrier(world);}
+
     if(FFT_NODE_ROOT) {
       if(FFT_LIB_TYPE == FFT_UTOFU_NODE) {
+        if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] begin fft_utofu->init \n");
         fft_utofu->init(nx_pppm, ny_pppm, nz_pppm,
           nxlo_node_in, nylo_node_in, nzlo_node_in, nxhi_node_in, nyhi_node_in, nzhi_node_in);
-        // utils::logmesg(lmp, "[INFO] finish fft_utofu->init \n");
         
+        if(DEBUG_MSG) {utils::logmesg(lmp, "[INFO] finish fft_utofu->init \n"); MPI_Barrier(comm->numa_comm);}
+
         fft_utofu->init_utofu_bg();
-        // utils::logmesg(lmp, "[INFO] finish fft_utofu->init_utofu_bg \n");
+        if(DEBUG_MSG) {utils::logmesg(lmp, "[INFO] finish fft_utofu->init_utofu_bg \n"); MPI_Barrier(comm->numa_comm);}
 
       } else if (FFT_LIB_TYPE == FFT_HEFFTE_NODE) {
         init_heffte_node();
@@ -468,7 +532,7 @@ void PPPMDPLR::init()
     }
   }
 
-  // utils::logmesg(lmp, "[INFO] finish init_node_fft \n");
+  if(comm->me == 0) utils::logmesg(lmp, "[INFO] finish init_node_fft \n");
 
   MPI_Barrier(MPI_COMM_WORLD);
 }
@@ -517,8 +581,8 @@ void PPPMDPLR::init_node_fft() {
   MPI_Allreduce(&nzlo_in, &nzlo_node_in, 1, MPI_INT, MPI_MIN, comm->node_comm);
   MPI_Allreduce(&nzhi_in, &nzhi_node_in, 1, MPI_INT, MPI_MAX, comm->node_comm);
 
-  utils::logmesg(lmp, "[INFO] PPPM nxlo_node_out  {}-{} {}-{} {}-{} \n", nxlo_node_out,nxhi_node_out,nylo_node_out,nyhi_node_out,nzlo_node_out,nzhi_node_out);
-  utils::logmesg(lmp, "[INFO] PPPM nxlo_node_in  {}-{} {}-{} {}-{} \n", nxlo_node_in,nxhi_node_in,nylo_node_in,nyhi_node_in,nzlo_node_in,nzhi_node_in);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] PPPM nxlo_node_out  {}-{} {}-{} {}-{} \n", nxlo_node_out,nxhi_node_out,nylo_node_out,nyhi_node_out,nzlo_node_out,nzhi_node_out);
+  if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] PPPM nxlo_node_in  {}-{} {}-{} {}-{} \n", nxlo_node_in,nxhi_node_in,nylo_node_in,nyhi_node_in,nzlo_node_in,nzhi_node_in);
 
   ngrid_node = (nxhi_node_out-nxlo_node_out+1) * (nyhi_node_out-nylo_node_out+1) *
     (nzhi_node_out-nzlo_node_out+1);
@@ -542,7 +606,7 @@ void PPPMDPLR::init_node_fft() {
   int neipbc[26][3];
   int neidirec[26][3];
 
-  int _max_buf_size = 0;
+  _max_buf_size = 0;
 
 
   int iswap = 0;
@@ -556,6 +620,9 @@ void PPPMDPLR::init_node_fft() {
     int lcl_fft_prd_out[6] = {nxlo_node_out, nxhi_node_out, nylo_node_out, nyhi_node_out, nzlo_node_out, nzhi_node_out};
     MPI_Allgather(lcl_fft_prd_out,6,MPI_INT,neigh_fft_prd_out[0],6,MPI_INT,comm->numa_comm);
     MPI_Allgather(lcl_fft_prd_in, 6,MPI_INT,neigh_fft_prd_in[0], 6,MPI_INT,comm->numa_comm);
+
+    // utils::logmesg(lmp, "[INFO] finish gather lcl_fft_prd_in  \n"); MPI_Barrier(comm->numa_comm);
+
 
     // utils::logmesg(lmp, "[INFO] finish allgather fft_prd\n");
 
@@ -681,8 +748,8 @@ void PPPMDPLR::init_node_fft() {
 
       if (x_min_unpack > x_max_unpack || y_min_unpack > y_max_unpack || z_min_unpack > z_max_unpack) {
         swap[iswap].nunpack = 0;
-        utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
-          iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], swap[iswap].nunpack);
+        // utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
+        //   iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], swap[iswap].nunpack);
         continue;
       }
 
@@ -701,18 +768,20 @@ void PPPMDPLR::init_node_fft() {
       if(n > _max_buf_size) _max_buf_size = n;
       // swap[iswap].recv_buf   = new FFT_SCALAR[n*3];
 
-      utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
-        iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], n);
+      // utils::logmesg(lmp, "[INFO] PPPM iswap prd out    {} {}   {}-{} {}-{} {}-{} unnpack {}\n", 
+      //   iswap, swap[iswap].recvproc, nei_prd_out[0], nei_prd_out[1], nei_prd_out[2], nei_prd_out[3], nei_prd_out[4], nei_prd_out[5], n);
     }
     for(int iswap = 0; iswap < 26; iswap++) {
-      swap[iswap].send_buf = new FFT_SCALAR[3*_max_buf_size];
-      swap[iswap].recv_buf = new FFT_SCALAR[3*_max_buf_size];
+      swap[iswap].send_buf = new FFT_SCALAR[6*_max_buf_size];
+      swap[iswap].recv_buf = new FFT_SCALAR[6*_max_buf_size];
     }
   }
 
-  // for(int iswap = 0; iswap < nswap; iswap++) {
-  //   utils::logmesg(lmp, "[INFO] iswap {} sendproc {} npack {}  recvproc {} nunpack {} \n", iswap, 
-  //     swap[iswap].sendproc, swap[iswap].npack, swap[iswap].recvproc, swap[iswap].nunpack);
+  // if(DEBUG_MSG) {
+  //   for(int iswap = 0; iswap < nswap; iswap++) {
+  //     utils::logmesg(lmp, "[INFO] PPPM iswap {} sendproc {} npack {}  recvproc {} nunpack {} \n", iswap, 
+  //       swap[iswap].sendproc, swap[iswap].npack, swap[iswap].recvproc, swap[iswap].nunpack);
+  //   }
   // }
   memory->create(work1_node, nfft_node_brick * 2, "PPPM::work1_node");
   memory->create(work2_node, nfft_node_brick * 2, "PPPM::work2_node");
@@ -820,7 +889,6 @@ void PPPMDPLR::compute(int eflag, int vflag)
     displs[0] = 0;
     for (int i = 1; i < NUMA_NUM; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
     MPI_Gatherv(atom->x[0], atom->nlocal * 3, MPI_DOUBLE, x_node[0], recvcounts, displs, MPI_DOUBLE, (NUMA_NUM - 1), comm->node_comm);
-    
 
     // utils::logmesg_arry(lmp,fmt::format("[info] before particle map recvcounts   nmax {}\n", nmax), recvcounts,      NUMA_NUM, 1);
     // utils::logmesg_arry(lmp,fmt::format("[info] before particle map displs        {}\n", nlocal_node), displs,      NUMA_NUM, 1);
@@ -857,7 +925,6 @@ void PPPMDPLR::compute(int eflag, int vflag)
   
   // utils::logmesg(lmp,"[INFO] finish reverse comm \n"); MPI_Barrier(MPI_COMM_WORLD);
   
-  brick2fft();
   // utils::logmesg(lmp,"[INFO] finish brick2fft \n"); MPI_Barrier(MPI_COMM_WORLD);
   
   
@@ -869,13 +936,19 @@ void PPPMDPLR::compute(int eflag, int vflag)
   if(DEBUG_MSG) utils::logmesg(lmp,"[INFO] begin test poisson\n");
 
   // if(FFT_LIB_TYPE == FFT_UTOFU_NODE) fft_utofu->blas_time = fft_utofu->comm_time = 0.;
+
+  // double *times = new double[comm->nprocs];
   // MPI_Barrier(MPI_COMM_WORLD);
   // double time = MPI_Wtime();
   // for(int iter = 0; iter < 1000; iter++) {
+    brick2fft();
     poisson();
   // }
   // time = MPI_Wtime() - time;
-  // utils::logmesg(lmp,"[INFO] poission time {} \n", time);
+  // MPI_Gather(&time, 1, MPI_DOUBLE, times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  // if(comm->me == 0) utils::logmesg(lmp,"[INFO] poission time {} \n", times[3]);
+
+
   // if(FFT_LIB_TYPE == FFT_UTOFU_NODE)
   //   utils::logmesg(lmp,"[INFO] poission utofu blas time {} comm time {}\n", fft_utofu->blas_time, fft_utofu->comm_time);
 
@@ -912,7 +985,7 @@ void PPPMDPLR::compute(int eflag, int vflag)
     MPI_Scatterv(fele_node, recvcounts, displs, MPI_DOUBLE, fele,  atom->nlocal * 3, MPI_DOUBLE, (NUMA_NUM - 1), comm->node_comm);
   }
 
-  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele \n"), fele, atom->nlocal * 3, 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele \n"), fele_node, atom->nlocal * 3, 1);
   // utils::logmesg_arry(lmp,fmt::format("[info] fieldforce fele_node \n"), fele_node, nlocal_node * 3, 1);
 
 
@@ -983,30 +1056,29 @@ void PPPMDPLR::compute(int eflag, int vflag)
 }
 
 
-void PPPMDPLR::reverse_node(){
+void PPPMDPLR::reverse_node() {
 
   if(FFT_NODE_ROOT) {
     MPI_Request *send_requests = new MPI_Request[nswap];
     MPI_Request *recv_requests = new MPI_Request[nswap];
-    
+
     for(int iswap = 0; iswap < nswap; iswap++) {
       auto recv_buf = swap[iswap].recv_buf;
       auto nunpack = swap[iswap].nunpack;
       auto recvproc = swap[iswap].recvproc;
-      MPI_Irecv(recv_buf, nunpack, MPI_DOUBLE, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
+      MPI_Irecv(recv_buf, nunpack, MPI_FFT_SCALAR, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
     }
   
     for(int iswap = 0; iswap < nswap; iswap++) {
       auto send_buf = swap[iswap].send_buf;
       auto list = swap[iswap].packlist;
       auto npack = swap[iswap].npack;
-      auto sendproc = swap[iswap].sendproc;
-  
+      auto sendproc = swap[iswap].sendproc;  
   
       FFT_SCALAR *src = &density_brick_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
       for (int i = 0; i < npack; i++)
         send_buf[i] = src[list[i]];
-      MPI_Isend(send_buf, npack, MPI_DOUBLE, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
+      MPI_Isend(send_buf, npack, MPI_FFT_SCALAR, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
     }
   
     MPI_Waitall(26, send_requests, MPI_STATUS_IGNORE);
@@ -1019,6 +1091,9 @@ void PPPMDPLR::reverse_node(){
       FFT_SCALAR *src = &density_brick_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
       for (int i = 0; i < nunpack; i++)
         src[list[i]] += recv_buf[i];
+
+      if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("pppm revers recv iswap {} nunpack {} ", iswap, nunpack),
+            recv_buf, nunpack, 1);
     }
     if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] PPPM finish reverse_node \n");
   }
@@ -1034,7 +1109,11 @@ void PPPMDPLR::forward_node(){
       auto recv_buf = swap[iswap].recv_buf;
       auto nunpack = swap[iswap].npack;
       auto recvproc = swap[iswap].sendproc;
-      MPI_Irecv(recv_buf, 3 * nunpack, MPI_DOUBLE, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
+
+      if(nunpack * 3 > _max_buf_size * 6) error->one(FLERR,"error  nunpack {} > _max_buf_size {} \n  ", nunpack*3, _max_buf_size);
+
+
+      MPI_Irecv(recv_buf, 3 * nunpack, MPI_FFT_SCALAR, recvproc, 0, MPI_COMM_WORLD, &recv_requests[iswap]);
     }
   
     for(int iswap = 0; iswap < nswap; iswap++) {
@@ -1047,12 +1126,16 @@ void PPPMDPLR::forward_node(){
       FFT_SCALAR *xsrc = &vdx_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
       FFT_SCALAR *ysrc = &vdy_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
       FFT_SCALAR *zsrc = &vdz_node[nzlo_node_out][nylo_node_out][nxlo_node_out];
-      for (int i = 0; i < npack; i++){
+
+      if(npack * 3 > _max_buf_size * 6) error->one(FLERR,"error  npack {} > _max_buf_size {} \n  ", npack*3, _max_buf_size);
+
+      for (int i = 0; i < npack; i++) {
         send_buf[n++] = xsrc[list[i]];
         send_buf[n++] = ysrc[list[i]];
         send_buf[n++] = zsrc[list[i]];
       }
-      MPI_Isend(send_buf, 3 * npack, MPI_DOUBLE, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
+
+      MPI_Isend(send_buf, 3 * npack, MPI_FFT_SCALAR, sendproc, 0, MPI_COMM_WORLD, &send_requests[iswap]);
     }
   
     MPI_Waitall(26, send_requests, MPI_STATUS_IGNORE);
@@ -1333,8 +1416,8 @@ void PPPMDPLR::poisson_ik_heffte_brick()
 
   n = 0;
   for (i = 0; i < nfft_brick; i++) {
-    heffte_work1[n] = {heffte_work1[n].real() * scaleinv * greensfn_brick[i],
-                      heffte_work1[n].imag() * scaleinv * greensfn_brick[i]};
+    heffte_work1[n] = {FFT_SCALAR(heffte_work1[n].real() * scaleinv * greensfn_brick[i]),
+      FFT_SCALAR(heffte_work1[n].imag() * scaleinv * greensfn_brick[i])};
     n++;
   }
 
@@ -1364,7 +1447,8 @@ void PPPMDPLR::poisson_ik_heffte_brick()
       for (i = xlo; i <= xhi; i++) {
       //   heffte_work2[n].real(-fkx_brick[i]*work1[2*n+1]);
       //   heffte_work2[n].imag(fkx_brick[i] *work1[2*n]);
-        heffte_work2[n] = {-fkx_brick[i]*heffte_work1[n].imag(), fkx_brick[i]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fkx_brick[i]*heffte_work1[n].imag()), 
+         FFT_SCALAR (fkx_brick[i]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1392,7 +1476,8 @@ void PPPMDPLR::poisson_ik_heffte_brick()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_work2[n] = {-fky_brick[j]*heffte_work1[n].imag(), fky_brick[j]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fky_brick[j]*heffte_work1[n].imag()), 
+                FFT_SCALAR(fky_brick[j]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1421,7 +1506,8 @@ void PPPMDPLR::poisson_ik_heffte_brick()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_work2[n] = {-fkz_brick[k]*heffte_work1[n].imag(), fkz_brick[k]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fkz_brick[k]*heffte_work1[n].imag()), 
+              FFT_SCALAR(fkz_brick[k]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1503,8 +1589,8 @@ void PPPMDPLR::poisson_ik_heffte_node()
 
   n = 0;
   for (i = 0; i < nfft_node_brick; i++) {
-    heffte_work1[n] = {heffte_work1[n].real() * scaleinv * greensfn_node[i],
-                      heffte_work1[n].imag() * scaleinv * greensfn_node[i]};
+    heffte_work1[n] = {FFT_SCALAR(heffte_work1[n].real() * scaleinv * greensfn_node[i]),
+                      FFT_SCALAR(heffte_work1[n].imag() * scaleinv * greensfn_node[i])};
     n++;
   }
 
@@ -1534,7 +1620,8 @@ void PPPMDPLR::poisson_ik_heffte_node()
       for (i = xlo; i <= xhi; i++) {
       //   heffte_work2[n].real(-fkx_node[i]*work1[2*n+1]);
       //   heffte_work2[n].imag(fkx_node[i] *work1[2*n]);
-        heffte_work2[n] = {-fkx_node[i]*heffte_work1[n].imag(), fkx_node[i]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fkx_node[i]*heffte_work1[n].imag()), 
+              FFT_SCALAR(fkx_node[i]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1562,7 +1649,8 @@ void PPPMDPLR::poisson_ik_heffte_node()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_work2[n] = {-fky_node[j]*heffte_work1[n].imag(), fky_node[j]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fky_node[j]*heffte_work1[n].imag()), 
+            FFT_SCALAR(fky_node[j]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1591,7 +1679,8 @@ void PPPMDPLR::poisson_ik_heffte_node()
   for (k = zlo; k <= zhi; k++)
     for (j = ylo; j <= yhi; j++)
       for (i = xlo; i <= xhi; i++) {
-        heffte_work2[n] = {-fkz_node[k]*heffte_work1[n].imag(), fkz_node[k]*heffte_work1[n].real()};
+        heffte_work2[n] = {FFT_SCALAR(-fkz_node[k]*heffte_work1[n].imag()), 
+              FFT_SCALAR(fkz_node[k]*heffte_work1[n].real())};
         n += 1;
       }
 
@@ -1933,6 +2022,9 @@ void PPPMDPLR::compute_gf_ik_node() {
 
 
 void PPPMDPLR::setup() {
+  if(first_setup == 1) return;
+  first_setup = 1;
+
   PPPM::setup();
 
   if(FFT_LIB_TYPE == FFT_HEFFTE_PROC) setup_brick();

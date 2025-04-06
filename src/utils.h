@@ -85,18 +85,20 @@ namespace utils {
 
   void logmesg(LAMMPS *lmp, const std::string &mesg);
 
-     template <typename TYPE> void logmesg_arry(LAMMPS *lmp, const std::string &mesg, TYPE *n_array, int n, int step)
+  template <typename TYPE> void logmesg_arry(LAMMPS *lmp, const std::string &mesg, TYPE *n_array, int n, int step)
   {
    std::string tmp;
    tmp += "[info]" + mesg;
    for(int i = 0; i < n ;i += step) {
-      if(std::is_same<int, TYPE>::value) tmp += fmt::format("  {}:{}", i, n_array[i]);
-      else tmp += fmt::format("  {}:{:<3.9f}", i, n_array[i]);
+      if(std::is_same<double, TYPE>::value) tmp += fmt::format("  {}:{:<3.9f}", i, n_array[i]);
+      else if(std::is_same<float, TYPE>::value) tmp += fmt::format("  {}:{:<3.9f}", i, n_array[i]);
+      else tmp += fmt::format("  {}:{}", i, n_array[i]);
       if(i != 0 && (i % 100 == 0)) tmp += "\n      ";
    }
    tmp += "\n";
    logmesg(lmp, tmp);
   }
+
 
    template <typename TYPE> void logmesg_arry_x(LAMMPS *lmp, const std::string &mesg, TYPE *n_array, int n, int step)
   {

@@ -15,6 +15,12 @@ KSpaceStyle(pppm/dplr,PPPMDPLR)
 
 #define SELF_HEFFTE
 
+#ifdef FFT_SINGLE
+#define fft_gemm cblas_sgemm
+#else
+#define fft_gemm cblas_dgemm
+#endif
+
 
 
 #include "pppm.h"
@@ -51,7 +57,7 @@ public:
 
   int rc;
   utofu_vbg_id_t lcl_vbg_ids[TNI_NUM][MAX_RING][2];
-  utofu_vbg_id_t rmt_vbg_ids[TNI_NUM][MAX_RING][MAX_RING][2];
+  utofu_vbg_id_t rmt_vbg_ids[TNI_NUM][MAX_RING][MAX_DIM_NODES][2];
   struct utofu_vbg_setting vbg_settings[TNI_NUM][MAX_RING][2];
 
   void init(int nx_pppm, int ny_pppm, int nz_pppm,
@@ -134,6 +140,8 @@ protected:
     };
 
     int displs[NUMA_NUM], recvcounts[NUMA_NUM];
+    int  _max_buf_size;
+
 
     
     int nswap, maxswap;
@@ -152,6 +160,9 @@ private:
     double **vg_node;
     double *fkx_node, *fky_node, *fkz_node;
     double *greensfn_node;
+
+    int first_setup;
+    int first_init;
 
 
     double **x_node;

@@ -1,7 +1,7 @@
 #ifndef DEEPMD_COMMON_H
 #define DEEPMD_COMMON_H 
 
-#define WITH_TENSOR_FLOW
+// #define WITH_TENSOR_FLOW
 // #define COMBIN_OMP
 
 #define SPLIT_TYPE_EMBEDDING
@@ -10,7 +10,7 @@
 
 // #define _TABULATE_FITTING
 
-// #define HIGH_PREC
+#define HIGH_PREC
 
 // #define TABLE_V1
 
@@ -53,7 +53,7 @@ typedef double ENERGYTYPE;
 #include <stdlib.h>
 #include <iostream>
 #include "matrix_tool.h"
-
+#include <assert.h>
 namespace LAMMPS_NS {
 
 
@@ -207,6 +207,159 @@ inline void cum_sum(
 //////////////////////////////////////////////
 
 #ifdef __ARM_FEATURE_SVE
+inline void matmul_nx4_4x16_nt(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+
+  assert(K == 4);
+  assert(N == 16);
+
+  init_vec_16(ain);
+  init_vec_16(bin);
+  init_vec_16(cin);
+      
+  svbool_t ptrue = svptrue_b32();
+
+  svuint32_t indices = svindex_u32(0, K);
+
+  svfloat32_t gathered_data_0 = svld1_gather_index(ptrue, (&b_fp32[0]), indices);
+  svfloat32_t gathered_data_1 = svld1_gather_index(ptrue, (&b_fp32[1]), indices);
+  svfloat32_t gathered_data_2 = svld1_gather_index(ptrue, (&b_fp32[2]), indices);
+  svfloat32_t gathered_data_3 = svld1_gather_index(ptrue, (&b_fp32[3]), indices);
+
+  float32_t a0, a1, a2, a3;
+  for(int m = 0; m < M; m++) {
+    a0 = a_fp32[m * K + 0];
+    a1 = a_fp32[m * K + 1];
+    a2 = a_fp32[m * K + 2];
+    a3 = a_fp32[m * K + 3];
+
+    bin_0 = svmul_n_f32_z(ptrue, gathered_data_0, a0);
+    bin_1 = svmul_n_f32_z(ptrue, gathered_data_1, a1);
+    bin_2 = svmul_n_f32_z(ptrue, gathered_data_2, a2);
+    bin_3 = svmul_n_f32_z(ptrue, gathered_data_3, a3);
+
+    cin_0 = svadd_f32_z(ptrue, bin_0, bin_1);
+    cin_1 = svadd_f32_z(ptrue, bin_2, bin_3);
+    cin_2 = svadd_f32_z(ptrue, cin_0, cin_1);
+
+    svst1(ptrue, d_fp32+m*N, cin_2); 
+  }
+}
+
+inline void matmul_nx5_5x25_nt(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+    assert(K == 5);
+    assert(N == 25);
+  
+    init_vec_16(ain);
+    init_vec_16(bin);
+    init_vec_16(cin);
+  
+    float *_b_ptr;
+    float *_d_ptr;
+  
+    float32_t a0, a1, a2, a3, a4, a5;
+  
+    svuint32_t indices = svindex_u32(0, K);
+
+    _b_ptr = b_fp32;
+    _d_ptr = d_fp32;
+  
+    for(int i = 0; i < N; i+=16) {
+      svbool_t ptrue = svwhilelt_b32(i, N) ;
+
+      ain_0 = svld1_gather_index(ptrue,   (&_b_ptr[0]), indices);
+      ain_1 = svld1_gather_index(ptrue,   (&_b_ptr[1]), indices);
+      ain_2 = svld1_gather_index(ptrue,   (&_b_ptr[2]), indices);
+      ain_3 = svld1_gather_index(ptrue,   (&_b_ptr[3]), indices);
+      ain_4 = svld1_gather_index(ptrue,   (&_b_ptr[4]), indices);
+    
+      for(int m = 0; m < M; m++) {
+        float * _ld_ptr = _d_ptr + m*N;
+  
+        a0 = a_fp32[m * K + 0];
+        a1 = a_fp32[m * K + 1];
+        a2 = a_fp32[m * K + 2];
+        a3 = a_fp32[m * K + 3];
+        a4 = a_fp32[m * K + 4];
+    
+        bin_0 = svmul_n_f32_z(ptrue, ain_0, a0);
+        bin_1 = svmul_n_f32_z(ptrue, ain_1, a1);
+        bin_2 = svmul_n_f32_z(ptrue, ain_2, a2);
+        bin_3 = svmul_n_f32_z(ptrue, ain_3, a3);
+        bin_4 = svmul_n_f32_z(ptrue, ain_4, a4);
+    
+        cin_0 = svadd_f32_z(ptrue, bin_0, bin_1);
+        cin_1 = svadd_f32_z(ptrue, bin_2, bin_3);
+        cin_3 = svadd_f32_z(ptrue, cin_0, cin_1);
+        cin_4 = svadd_f32_z(ptrue, bin_4, cin_3);
+    
+        svst1(ptrue, _ld_ptr, cin_4); 
+      }
+
+      _b_ptr = _b_ptr + 5 * 16 ;
+      _d_ptr = _d_ptr + 16;
+    }
+}
+
+inline void matmul_nx6_6x36_nt(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+
+  assert(K == 6);
+  assert(N == 36);
+
+  init_vec_16(ain);
+  init_vec_16(bin);
+  init_vec_16(cin);
+
+  float *_b_ptr;
+  float *_d_ptr;
+
+  float32_t a0, a1, a2, a3, a4, a5;
+
+  svuint32_t indices = svindex_u32(0, K);
+
+  for(int i = 0; i < 3; i++) {
+    svbool_t ptrue = i == 2 ? svwhilelt_b32(0, 4) : svptrue_b32();
+
+    _b_ptr = b_fp32 + 6 * 16 * i;
+  
+    ain_0 = svld1_gather_index(ptrue,   (&_b_ptr[0]), indices);
+    ain_1 = svld1_gather_index(ptrue,   (&_b_ptr[1]), indices);
+    ain_2 = svld1_gather_index(ptrue,   (&_b_ptr[2]), indices);
+    ain_3 = svld1_gather_index(ptrue,   (&_b_ptr[3]), indices);
+    ain_4 = svld1_gather_index(ptrue,   (&_b_ptr[4]), indices);
+    ain_5 = svld1_gather_index(ptrue,   (&_b_ptr[5]), indices);
+  
+    for(int m = 0; m < M; m++) {
+      _d_ptr = d_fp32+m*N+i*16;
+
+      a0 = a_fp32[m * K + 0];
+      a1 = a_fp32[m * K + 1];
+      a2 = a_fp32[m * K + 2];
+      a3 = a_fp32[m * K + 3];
+      a4 = a_fp32[m * K + 4];
+      a5 = a_fp32[m * K + 5];
+  
+      bin_0 = svmul_n_f32_z(ptrue, ain_0, a0);
+      bin_1 = svmul_n_f32_z(ptrue, ain_1, a1);
+      bin_2 = svmul_n_f32_z(ptrue, ain_2, a2);
+      bin_3 = svmul_n_f32_z(ptrue, ain_3, a3);
+      bin_4 = svmul_n_f32_z(ptrue, ain_4, a4);
+      bin_5 = svmul_n_f32_z(ptrue, ain_5, a5);
+  
+      cin_0 = svadd_f32_z(ptrue, bin_0, bin_1);
+      cin_1 = svadd_f32_z(ptrue, bin_2, bin_3);
+      cin_2 = svadd_f32_z(ptrue, bin_4, bin_5);
+      cin_3 = svadd_f32_z(ptrue, cin_0, cin_1);
+      cin_4 = svadd_f32_z(ptrue, cin_2, cin_3);
+  
+      svst1(ptrue, _d_ptr, cin_4); 
+    }
+  }
+}
+
+
 inline void matmul_1x240_240x240(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
   svbool_t ptrue = svptrue_b32();

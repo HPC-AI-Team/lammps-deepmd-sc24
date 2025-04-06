@@ -370,6 +370,20 @@ void Domain::set_local_box()
     if (mysplit[2][1] < 1.0) subhi[2] = boxlo[2] + zprd*mysplit[2][1];
     else subhi[2] = boxhi[2];
   }
+
+  if(DEBUG_MSG) {
+    auto mesg = fmt::format("[info] subboder split "); 
+    for(int i = 0; i < 3; i++) {
+      mesg += fmt::format("  {}:{} ", sublo[i], subhi[i]);
+    }
+    mesg += "\n";
+    mesg += fmt::format("[NUMA] my loc "); 
+    for(int i = 0; i < 3; i++) {
+      mesg += fmt::format(" {} ", comm->myloc[i]);
+    }
+    mesg += "\n";
+    utils::logmesg(lmp,mesg);
+  }
 }
 
 /* ----------------------------------------------------------------------

@@ -114,6 +114,44 @@ struct PB_param_type3
 // } ;
 } __attribute__ ((aligned(256)));
 
+struct PB_param_type_water_dplr
+{
+  double c_matrix_0[2][2048*240];
+  double c_matrix_1[2][240*240];
+  double c_matrix_2[2][240*240];
+  double c_matrix_3[2][240*1];
+  double c_bias_0[2][240];
+  double c_bias_1[2][240];
+  double c_bias_2[2][240];
+  double c_bias_3[2][1];
+  double c_idt_0[2][240];
+  double c_idt_1[2][240];
+  double c_idt_2[2][240];
+  double c_idt_3[2][240];
+  double c_table[2*2][1360*768];
+  double c_table_info[6];
+  double std_ones[2*552];
+  double avg_zero[2*552];  
+
+  double c_matrix_0_dipole[2048*240];
+  double c_matrix_1_dipole[240*240];
+  double c_matrix_2_dipole[240*240];
+  double c_matrix_3_dipole[240*128];
+  double c_bias_0_dipole[240];
+  double c_bias_1_dipole[240];
+  double c_bias_2_dipole[240];
+  double c_bias_3_dipole[128];
+  double c_idt_0_dipole[240];
+  double c_idt_1_dipole[240];
+  double c_idt_2_dipole[240];
+  double c_idt_3_dipole[240];
+  double c_table_dipole[2][1360*768];
+  double c_table_info_dipole[6];
+  double std_ones_dipole[2*552];
+  double avg_zero_dipole[2*552];
+  int dipole_type;
+} __attribute__ ((aligned(256)));
+
 struct NeighborInfo 
 {
   int type;
@@ -217,28 +255,6 @@ public:
   void make_inlist(InputNlist & inlist);
 };
 
-// typedef struct Session_Buf_Struct {
-//   FPTYPE** descrptor;
-//   FPTYPE** rg_silce;
-//   FPTYPE** rg_fusion;
-//   FPTYPE** qmat, **qmat_grad;
-
-//   FPTYPE** s_vector_grad;
-//   FPTYPE** r_matrix_grid;
-//   FPTYPE** r_matrix_grid_3d[3];
-
-//   FPTYPE *descrptor_grad;
-//   FPTYPE *layer_0, *layer_1, *layer_2, *layer_final, *layer_final_qmat;
-//   FPTYPE *layer_0_tanh, *layer_1_tanh, *layer_2_tanh;
-//   FPTYPE *layer_0_grad, *layer_1_grad, *layer_2_grad;
-//   FPTYPE *layer_1_grad_reg, *layer_2_grad_reg, *layer_final_grad;
-
-//   __fp16 *gemm_fp16_buf;
-
-//   FPTYPE *rg_fusion_grad, *rg_slice_grad;
-//   FPTYPE *buf;
-// } Session_Buf;
-
 class DeepPot: public Pointers {
 public:
   DeepPot (class LAMMPS *) ;
@@ -265,8 +281,10 @@ public:
   void shuffer_dextf(int *bd_idx, FPTYPE *delef_);
 
   void load_data_from_dat(std::string graph_path);
+  void load_data_from_dat_water_dipole(std::string graph_path) ;
 
   void store_pb_data();
+  void store_pb_data_water_dipole();
   void table_convert(FPTYPE** &_in_table, int _ntypes);
   
   void compute (double &	ener,
@@ -300,6 +318,7 @@ public:
   void embedding_net(int type_i);
   void prod_R_matrix(int type_i);
   void prod_atom_nlist();
+  void task_division_selet_real(int &ifrom, int &ito);
 
   void tabulateFusion(int _loc, int _nnei,
                       FPTYPE* &em_x,
@@ -416,6 +435,9 @@ public:
   FPTYPE** grad_f_data;
 
   int MODEL_TYPE;
+
+  std::vector<int> real_index;
+
 
   std::vector<int> dipole_sel_type;
   

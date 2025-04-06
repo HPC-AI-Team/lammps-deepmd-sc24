@@ -160,28 +160,28 @@ int me = comm->me;
 FJMPI_Topology_get_coords(MPI_COMM_WORLD, me, FJMPI_LOGICAL, 3,
          myloc);
 
-int tmp_proc[3];
-FJMPI_Topology_get_shape(&tmp_proc[0], &tmp_proc[1], &tmp_proc[2]);
+// int tmp_proc[3];
+// FJMPI_Topology_get_shape(&tmp_proc[0], &tmp_proc[1], &tmp_proc[2]);
 
-int proc_scale[3] = {procgrid[0]/tmp_proc[0],procgrid[1]/tmp_proc[1],procgrid[2]/tmp_proc[2]};
-int offset[3];
+// int proc_scale[3] = {procgrid[0]/tmp_proc[0],procgrid[1]/tmp_proc[1],procgrid[2]/tmp_proc[2]};
+// int offset[3];
 
-offset[2] = (me % 4) / proc_scale[0] / proc_scale[1];
-offset[1] = ((me % 4) / proc_scale[0]) % proc_scale[1];
-offset[0] = (me % 4) % proc_scale[0];
+// offset[2] = (me % 4) / proc_scale[0] / proc_scale[1];
+// offset[1] = ((me % 4) / proc_scale[0]) % proc_scale[1];
+// offset[0] = (me % 4) % proc_scale[0];
 
-for(int i = 0; i < 3; i++){
-myloc[i] = myloc[i] * proc_scale[i] + offset[i];
-}
-
-
-// myloc[0] *= 2; myloc[2] *= 2;
-// switch (me % 4) {
-//   case 0 : break;
-//   case 1 : myloc[2]++; break;
-//   case 2 : myloc[0]++; break;
-//   case 3 : myloc[0]++; myloc[2]++; break;
+// for(int i = 0; i < 3; i++){
+// myloc[i] = myloc[i] * proc_scale[i] + offset[i];
 // }
+
+
+myloc[0] *= 2; myloc[2] *= 2;
+switch (me % 4) {
+  case 0 : break;
+  case 1 : myloc[0]++; break;
+  case 2 : myloc[2]++; break;
+  case 3 : myloc[2]++; myloc[0]++; break;
+}
 
 int nprocs;
 MPI_Comm_size(world,&nprocs);

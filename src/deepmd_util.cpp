@@ -33,48 +33,7 @@ using namespace LAMMPS_NS;
 enum{ENER_TYPE, DIPOLE_TYPE};
 
 
-inline void task_division(int nthreads, int nloc, int tid, int &ifrom, int &ito) {
-  int idelta_i = nloc / nthreads;
-  int idelta_j = nloc % nthreads;
-  int _bias    = idelta_j == 0 ? 0 : 1;
-  
-  if(tid >= idelta_j) {
-    ifrom = (idelta_i + _bias) * idelta_j + idelta_i * (tid - idelta_j);
-    ito = ifrom + idelta_i; 
-  } else {
-    ifrom = (idelta_i + _bias) * (tid);
-    ito = ifrom + idelta_i + _bias; 
-  }
-  ito = (ito > nloc) ? nloc : ito; 
-}
 
-inline void task_division_selet_real(int nthreads, int nloc, int nloc_real, int tid, int &ifrom, int &ito, int *type, int ntype) {
-
-  int idelta_i = nloc_real / nthreads;
-  int idelta_j = nloc_real % nthreads;
-  int _bias    = idelta_j == 0 ? 0 : 1;
-
-  int _ifrom, _ito;
-  
-  if(tid >= idelta_j) {
-    _ifrom = (idelta_i + _bias) * idelta_j + idelta_i * (tid - idelta_j);
-    _ito = _ifrom + idelta_i; 
-  } else {
-    _ifrom = (idelta_i + _bias) * (tid);
-    _ito = _ifrom + idelta_i + _bias; 
-  }
-  _ito = (_ito > nloc_real) ? nloc_real : _ito; 
-
-  int num = 0; 
-  for(int i = 0; i < nloc; i++) {
-    if(type[i] <= ntype) {
-      num++; 
-      if(num - 1 == _ifrom) ifrom = i;
-      if(num - 1 == _ito) ito = i;
-    }
-  }
-  ito = MIN(ito, nloc);
-}
 
 inline void locate_xx(
     const FPTYPE& lower, 
@@ -306,6 +265,29 @@ inline void select_real_atoms(std::vector<int> & fwd_map,
   assert((nloc_real+nghost_real) == bkw_map.size());  
 }
 
+void DeepPot::task_division_selet_real(int &ifrom, int &ito) {
+  real_index.clear();
+
+  for(int i = 0; i < atom->nlocal; i++) {
+    if(atom->type[i] <= ntypes) real_index.push_back(i);
+  }
+
+  int nthreads = comm->nthreads;
+
+  int idelta_i = real_index.size() / nthreads;
+  int idelta_j = real_index.size() % nthreads;
+  int _bias    = idelta_j == 0 ? 0 : 1;
+  
+  if(tid >= idelta_j) {
+    ifrom = (idelta_i + _bias) * idelta_j + idelta_i * (tid - idelta_j);
+    ito = ifrom + idelta_i; 
+  } else {
+    ifrom = (idelta_i + _bias) * (tid);
+    ito = ifrom + idelta_i + _bias; 
+  }
+  ito   = (ito > real_index.size()) ? real_index.size() : ito; 
+}
+
 
 DeepPot::DeepPot (LAMMPS *lmp) : Pointers(lmp){
   t_timer = new Timer(lmp);
@@ -331,19 +313,22 @@ void DeepPot::splite_atom() {
   NeighList *list = neighbor->lists[0];
 
 
-  task_division_selet_real(nthreads, global_nlocal, atom->nlocal_real, tid, ifrom, ito, atom->type, ntypes);
+  // task_division_selet_real(nthreads, global_nlocal, atom->nlocal_real, tid, ifrom, ito, atom->type, ntypes);
+  task_division_selet_real(ifrom, ito);
   // task_division(nthreads, global_nlocal, tid, ifrom, ito);
   // ifrom = 0;
   // if(tid == 0) ito = atom->nlocal;
   // else ito = 0;
 
-  if (DEBUG_DP) utils::logmesg(lmp, "splite_atom tid {} ifrom {} ito {} nlocal  {} nghost {} ago {}\n", 
-    tid,  ifrom, ito, atom->nlocal, atom->nghost, ago);
+  // if (DEBUG_DP) utils::logmesg(lmp, "splite_atom tid {} ifrom {} ito {} atom->nlocal_real {} nlocal  {} nghost {} ago {}\n", 
+  //   tid,  ifrom, ito, atom->nlocal_real, atom->nlocal, atom->nghost, ago);
 
   if(ago == 0) {
     backward_index_size = 0;
-    for(int global_i_index = ifrom; global_i_index < ito; global_i_index++) {
-      if(atom->type[global_i_index] > ntypes) continue;
+    for(int _i_index = ifrom; _i_index < ito; _i_index++) {
+      // 使用的是pair_index，不开启负载均衡情况下就是nlocal的映射
+      int global_i_index = real_index[_i_index];
+      // if(atom->type[global_i_index] > ntypes) continue;
       backward_index_map[backward_index_size++] = global_i_index;
     }
     int local_nloc = ago == 0 ? backward_index_size : lmp_list.inum;
@@ -499,11 +484,15 @@ void DeepPot::splite_atom() {
 }
 
 void DeepPot::shuffer_dextf(int *bd_idx, FPTYPE *delef_) {
-  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} bd_idx {} \n", tid, nloc),bd_idx, nloc, 1 );
-  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} datype {} \n", tid, nloc),datype, nloc, 1 );
-  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} dipole_sel_type {} \n",tid, dipole_sel_type.size()),dipole_sel_type.data(), dipole_sel_type.size(), 1 );
-
   int ndextf = 0;
+
+  if(nloc == 0) {
+    return;
+  }
+  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} bd_idx {}", tid, nloc),bd_idx, nloc, 1 );
+  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} datype {}", tid, nloc),datype, nloc, 1 );
+  // if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} dipole_sel_type {}",tid, dipole_sel_type.size()),dipole_sel_type.data(), dipole_sel_type.size(), 1 );
+
   const int *atommap_bkw_map = atommap.get_bkw_map();
   for(int ii = 0; ii < nloc; ++ii){
     if (binary_search(dipole_sel_type.begin(), dipole_sel_type.end(), datype[ii])){
@@ -518,7 +507,7 @@ void DeepPot::shuffer_dextf(int *bd_idx, FPTYPE *delef_) {
     }
   }
 
-  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf dextf {} \n", ndextf),dextf, ndextf*3, 1 );
+  if(DEBUG_DP) utils::logmesg_arry(lmp, fmt::format("shuffer_dextf tid {} dextf {} ", tid, ndextf),dextf, ndextf*3, 1 );
 
 }
 
@@ -1267,6 +1256,176 @@ void DeepPot::store_pb_data() {
   }  
 }
 
+
+void DeepPot::store_pb_data_water_dipole() {
+  PB_param_type_water_dplr pb_data;
+
+  utils::logmesg(lmp, fmt::format("[info] begin store_pb_data\n"));
+
+  if(MODEL_TYPE == ENER_TYPE) {    
+    for(int ii = 0; ii < ntypes; ii++) {
+      if(c_matrix[0][ii]) memcpy(pb_data.c_matrix_0[ii],   c_matrix[0][ii],     2048*240 * sizeof(double));
+      if(c_matrix[1][ii]) memcpy(pb_data.c_matrix_1[ii],   c_matrix[1][ii],     240*240 * sizeof(double));
+      if(c_matrix[2][ii]) memcpy(pb_data.c_matrix_2[ii],   c_matrix[2][ii],     240*240 * sizeof(double));
+      if(c_matrix[3][ii]) memcpy(pb_data.c_matrix_3[ii],   c_matrix[3][ii],     240*1 * sizeof(double));
+      // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_matrix\n"));
+      if(c_bias[0][ii]  ) memcpy(pb_data.c_bias_0[ii],     c_bias[0][ii],       240 * sizeof(double));
+      if(c_bias[1][ii]  ) memcpy(pb_data.c_bias_1[ii],     c_bias[1][ii],       240 * sizeof(double));
+      if(c_bias[2][ii]  ) memcpy(pb_data.c_bias_2[ii],     c_bias[2][ii],       240 * sizeof(double));
+      if(c_bias[3][ii]  ) memcpy(pb_data.c_bias_3[ii],     c_bias[3][ii],       1 * sizeof(double));
+      // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_bias\n"));
+      // if(c_idt[0][ii]   ) memcpy(pb_data.c_idt_0[ii],      c_idt[0][ii],        240 * sizeof(double));
+      if(c_idt[1][ii]   ) memcpy(pb_data.c_idt_1[ii],      c_idt[1][ii],        240 * sizeof(double));
+      if(c_idt[2][ii]   ) memcpy(pb_data.c_idt_2[ii],      c_idt[2][ii],        240 * sizeof(double));
+      // if(c_idt[3][ii]   ) memcpy(pb_data.c_idt_3[ii],      c_idt[3][ii],        240 * sizeof(double));
+    }
+    if(std_ones      ) memcpy(pb_data.std_ones,     std_ones,           2*552 * sizeof(double));
+    if(avg_zero      ) memcpy(pb_data.avg_zero,     avg_zero,           2*552 * sizeof(double));
+    // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_idt\n"));
+    if(c_table_info  ) memcpy(pb_data.c_table_info, c_table_info,       6 * sizeof(double));
+
+    for(int ii = 0; ii < ntypes*ntypes; ii++) {
+      if(c_table[ii]    ) memcpy(pb_data.c_table[ii],      c_table[ii],         1360*768 * sizeof(double));
+    }    
+  } else {
+    std::ifstream ifs("pb_data_water_dplr.dat", std::ios::in | std::ios::binary);
+    ifs.read((char*)&pb_data , sizeof(pb_data));
+    ifs.close();
+
+    if(c_matrix[0][0]) memcpy(pb_data.c_matrix_0_dipole,   c_matrix[0][0],     2048*240 * sizeof(double));
+    if(c_matrix[1][0]) memcpy(pb_data.c_matrix_1_dipole,   c_matrix[1][0],     240*240 * sizeof(double));
+    if(c_matrix[2][0]) memcpy(pb_data.c_matrix_2_dipole,   c_matrix[2][0],     240*240 * sizeof(double));
+    if(c_matrix[3][0]) memcpy(pb_data.c_matrix_3_dipole,   c_matrix[3][0],     240*128 * sizeof(double));
+    // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_matrix\n"));
+    if(c_bias[0][0]  ) memcpy(pb_data.c_bias_0_dipole,     c_bias[0][0],       240 * sizeof(double));
+    if(c_bias[1][0]  ) memcpy(pb_data.c_bias_1_dipole,     c_bias[1][0],       240 * sizeof(double));
+    if(c_bias[2][0]  ) memcpy(pb_data.c_bias_2_dipole,     c_bias[2][0],       240 * sizeof(double));
+    if(c_bias[3][0]  ) memcpy(pb_data.c_bias_3_dipole,     c_bias[3][0],       128 * sizeof(double));
+    // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_bias\n"));
+    // if(c_idt[0][0]   ) memcpy(pb_data.c_idt_0_dipole,      c_idt[0][0],        240 * sizeof(double));
+    if(c_idt[1][0]   ) memcpy(pb_data.c_idt_1_dipole,      c_idt[1][0],        240 * sizeof(double));
+    if(c_idt[2][0]   ) memcpy(pb_data.c_idt_2_dipole,      c_idt[2][0],        240 * sizeof(double));
+    // if(c_idt[3][0]   ) memcpy(pb_data.c_idt_3_dipole,      c_idt[3][0],        240 * sizeof(double));
+    // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_idt\n"));
+  
+    if(c_table[0]    ) memcpy(pb_data.c_table_dipole[0],      c_table[0],         1360*768 * sizeof(double));
+    if(c_table[1]    ) memcpy(pb_data.c_table_dipole[1],      c_table[1],         1360*768 * sizeof(double));
+    if(c_table_info  ) memcpy(pb_data.c_table_info_dipole, c_table_info,       6 * sizeof(double));
+    // utils::logmesg(lmp, fmt::format("[info] finish memcpy c_table_info\n"));
+    if(std_ones      ) memcpy(pb_data.std_ones_dipole,     std_ones,           2*552 * sizeof(double));
+    if(avg_zero      ) memcpy(pb_data.avg_zero_dipole,     avg_zero,           2*552 * sizeof(double));
+    pb_data.dipole_type = 0;
+  }
+
+  FILE * fp;
+  if((fp = fopen ("pb_data_water_dplr.dat","wb"))==NULL)  {
+    error->all(FLERR, "fp open fail \n");
+  }
+
+  if(fwrite(&pb_data,sizeof(pb_data),1,fp)!=1) {
+    error->all(FLERR, "file write error \n");
+  }    
+  fclose(fp);
+  utils::logmesg(lmp, fmt::format("[info] finish memcpy store_pb_data\n"));
+}
+
+void DeepPot::load_data_from_dat_water_dipole(std::string graph_path) {
+  PB_param_type_water_dplr pb_data;
+
+  if(comm->me == 0) {
+    std::ifstream ifs(graph_path, std::ios::in | std::ios::binary);
+    ifs.read((char*)&pb_data , sizeof(pb_data));
+    ifs.close();
+
+    if(DEBUG_DP) utils::logmesg(lmp, "[NUMA] load_data_from_dat graph_path {} \n", graph_path);
+
+    MPI_Bcast((char*)&pb_data, sizeof(pb_data), MPI_CHAR, 0, world);
+  } else {
+    MPI_Bcast((char*)&pb_data, sizeof(pb_data), MPI_CHAR, 0, world);
+  }
+
+  if(MODEL_TYPE == ENER_TYPE) {
+    for(int type_i = 0; type_i < ntypes; type_i++) {
+      c_matrix[0][type_i] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][type_i][i] = (FPTYPE)pb_data.c_matrix_0[type_i][i];
+      c_matrix[1][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][type_i][i] = (FPTYPE)pb_data.c_matrix_1[type_i][i];
+      c_matrix[2][type_i] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][type_i][i] = (FPTYPE)pb_data.c_matrix_2[type_i][i];
+      c_matrix[3][type_i] = new FPTYPE[240*1]   ;    for(int i = 0; i < 240*1; i++)    c_matrix[3][type_i][i] = (FPTYPE)pb_data.c_matrix_3[type_i][i];
+      c_bias[0][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][type_i][i]   = (FPTYPE)pb_data.c_bias_0[type_i][i];
+      c_bias[1][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][type_i][i]   = (FPTYPE)pb_data.c_bias_1[type_i][i];
+      c_bias[2][type_i]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][type_i][i]   = (FPTYPE)pb_data.c_bias_2[type_i][i];
+      c_bias[3][type_i]   = new FPTYPE[1]       ;    for(int i = 0; i < 1; i++)        c_bias[3][type_i][i]   = (FPTYPE)pb_data.c_bias_3[type_i][i];
+      c_idt[0][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][type_i][i]    = (FPTYPE)pb_data.c_idt_0[type_i][i];
+      c_idt[1][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][type_i][i]    = (FPTYPE)pb_data.c_idt_1[type_i][i];
+      c_idt[2][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][type_i][i]    = (FPTYPE)pb_data.c_idt_2[type_i][i];
+      c_idt[3][type_i]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][type_i][i]    = (FPTYPE)pb_data.c_idt_3[type_i][i];
+    }
+
+    std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     std_ones[i]       = (FPTYPE)pb_data.std_ones[i];
+    avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     avg_zero[i]       = (FPTYPE)pb_data.avg_zero[i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_data.c_table_info[i];
+
+    for(int type_i = 0; type_i < ntypes*ntypes; type_i++) {
+      c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_data.c_table[type_i][i];
+    }    
+  } else {
+    c_matrix[0][0] = new FPTYPE[2048*240];    for(int i = 0; i < 2048*240; i++) c_matrix[0][0][i] = (FPTYPE)pb_data.c_matrix_0_dipole[i];
+    c_matrix[1][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[1][0][i] = (FPTYPE)pb_data.c_matrix_1_dipole[i];
+    c_matrix[2][0] = new FPTYPE[240*240] ;    for(int i = 0; i < 240*240; i++)  c_matrix[2][0][i] = (FPTYPE)pb_data.c_matrix_2_dipole[i];
+    c_matrix[3][0] = new FPTYPE[240*128] ;    for(int i = 0; i < 240*128; i++)  c_matrix[3][0][i] = (FPTYPE)pb_data.c_matrix_3_dipole[i];
+    c_bias[0][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[0][0][i]   = (FPTYPE)pb_data.c_bias_0_dipole[i];
+    c_bias[1][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[1][0][i]   = (FPTYPE)pb_data.c_bias_1_dipole[i];
+    c_bias[2][0]   = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_bias[2][0][i]   = (FPTYPE)pb_data.c_bias_2_dipole[i];
+    c_bias[3][0]   = new FPTYPE[128]     ;    for(int i = 0; i < 128; i++)      c_bias[3][0][i]   = (FPTYPE)pb_data.c_bias_3_dipole[i];
+    c_idt[0][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[0][0][i]    = (FPTYPE)pb_data.c_idt_0_dipole[i];
+    c_idt[1][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[1][0][i]    = (FPTYPE)pb_data.c_idt_1_dipole[i];
+    c_idt[2][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[2][0][i]    = (FPTYPE)pb_data.c_idt_2_dipole[i];
+    c_idt[3][0]    = new FPTYPE[240]     ;    for(int i = 0; i < 240; i++)      c_idt[3][0][i]    = (FPTYPE)pb_data.c_idt_3_dipole[i];
+    c_table[0]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[0][i]     = (FPTYPE)pb_data.c_table_dipole[0][i];
+    c_table[1]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[1][i]     = (FPTYPE)pb_data.c_table_dipole[1][i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_data.c_table_info_dipole[i];
+    std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)    std_ones[i]       = (FPTYPE)pb_data.std_ones_dipole[i];
+    avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)    avg_zero[i]       = (FPTYPE)pb_data.avg_zero_dipole[i];
+    dipole_sel_type.push_back(pb_data.dipole_type);
+  }
+
+  int matrix_size[4][2] = {{dim_descrpt, n_neuron[0]},
+                              {n_neuron[0], n_neuron[1]},
+                              {n_neuron[1], n_neuron[2]},
+                              {n_neuron[2], 1}};
+
+  if(MODEL_TYPE == DIPOLE_TYPE) matrix_size[3][1] = last_layer_size;                    
+  int _in_ntypes = MODEL_TYPE == ENER_TYPE? ntypes : 1;
+
+  for(int ii = 0; ii < 4; ii++) {
+    c_matrix_t[ii] = new FPTYPE*[_in_ntypes];
+    c_matrix_fp16[ii] = new float16_t*[_in_ntypes];
+    c_matrix_t_fp16[ii] = new float16_t*[_in_ntypes];
+    for(int type_i = 0;  type_i < _in_ntypes; type_i++) {
+      c_matrix_t[ii][type_i] = new FPTYPE[matrix_size[ii][0] * matrix_size[ii][1]];
+      c_matrix_t_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
+      c_matrix_fp16[ii][type_i] = new float16_t[matrix_size[ii][0] * matrix_size[ii][1]];
+      for(int mm = 0; mm < matrix_size[ii][0]; mm++) {
+        for(int nn = 0; nn < matrix_size[ii][1]; nn++) {
+          c_matrix_t[ii][type_i][nn*matrix_size[ii][0]+mm] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
+          c_matrix_t_fp16[ii][type_i][nn*matrix_size[ii][0]+mm] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
+          c_matrix_fp16[ii][type_i][mm*matrix_size[ii][1]+nn] = c_matrix[ii][type_i][mm*matrix_size[ii][1]+nn];
+        }
+      }
+    }
+  }
+
+  grad_f_data = new FPTYPE*[_in_ntypes];
+  for(int type_i = 0; type_i < _in_ntypes; type_i++) {
+    FPTYPE _one_matrix[1] = {1.0};
+    grad_f_data[type_i] = new FPTYPE[240];
+    memset(grad_f_data[type_i], 0, 240 * sizeof(FPTYPE));
+
+    matmul(1, n_neuron[2], 1, _one_matrix, c_matrix_t[3][type_i], NULL, grad_f_data[type_i]);
+  }
+
+  if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] finish load data \n"));
+}
+
 void DeepPot::load_data_from_dat(std::string graph_path) {
 
   if(ntypes == 1 && comm->tabulate_flag == 5) {
@@ -1459,22 +1618,6 @@ void DeepPot::load_data_from_dat(std::string graph_path) {
     matmul(1, n_neuron[2], 1, _one_matrix, c_matrix_t[3][type_i], NULL, grad_f_data[type_i]);
   }
 
-  // if(DEBUG_DP) print_v(204  , fmt::format("pb state c_matrix[0][0]:"),  c_matrix[0][0]);
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_matrix[1][0]:"),  c_matrix[1][0]);
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_matrix[2][0]:"),  c_matrix[2][0]);
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_matrix[3][0]:"),  c_matrix[3][0]);
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_bias[0][0]  :"),  c_bias[0][0]  );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_bias[1][0]  :"),  c_bias[1][0]  );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_bias[2][0]  :"),  c_bias[2][0]  );
-  // if(DEBUG_DP) print_v(1    , fmt::format("pb state c_bias[3][0]  :"),  c_bias[3][0]  );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_idt[0][0]   :"),  c_idt[0][0]   );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_idt[1][0]   :"),  c_idt[1][0]   );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_idt[2][0]   :"),  c_idt[2][0]   );
-  // if(DEBUG_DP) print_v(240  , fmt::format("pb state c_idt[3][0]   :"),  c_idt[3][0]   );
-  // if(DEBUG_DP) print_v(136  , fmt::format("pb state c_table[0]    :"),  c_table[0]    );
-  // if(DEBUG_DP) print_v(6    , fmt::format("pb state c_table_info  :"),  c_table_info  );
-  // if(DEBUG_DP) print_v(204  , fmt::format("pb state std_ones      :"),  std_ones      );
-  // if(DEBUG_DP) print_v(204  , fmt::format("pb state avg_zero      :"),  avg_zero      );
 }
 
 void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth, 
@@ -1531,6 +1674,7 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
       if(MODEL_TYPE == DIPOLE_TYPE)
         get_vector_from_model(dipole_sel_type, "dipole_charge/model_attr/sel_type");
 
+
       std::string prex = MODEL_TYPE == ENER_TYPE ? "" : "dipole_charge/";
       int _types = MODEL_TYPE == ENER_TYPE ? ntypes : dipole_sel_type.size();
       
@@ -1541,13 +1685,13 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
         avg_zero, std_ones,
         grad_f_data);
 
-      
+      // if(comm->me == 0) store_pb_data_water_dipole();      
       
     #else
       error->all(FLERR,"Illegal graph_path");
     #endif
   } else if(suffix == "dat" ) {
-    load_data_from_dat(graph_path);
+    load_data_from_dat_water_dipole(graph_path);
   } else {
     error->all(FLERR,"Illegal graph_path");
   }
@@ -1610,6 +1754,11 @@ void DeepPot::compute_dipole_R_grad () {
   for(int type_i = 0; type_i < sess_ntypes; type_i++) {
     fitting_net_dipole_R_grad(type_i);
   }
+
+  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] finish compute_dipole_R_grad tid {} \n");
+
+
+
 
   return;
 }
@@ -1674,14 +1823,14 @@ void DeepPot::compute_ener (ENERGYTYPE *			dener_,
   double*	dvirial_) {
  
   dener = 0;
-  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
-
-
+  
+  
   if (nloc == 0) {
     *dener_ = 0;
     memset(dvirial_, 0, 9 * sizeof(double));
     return;
   }
+  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
 
   memset(dforce, 0, sizeof(double) * 3 * nall);
   memset(dvirial, 0, sizeof(double) * 9);
@@ -3361,43 +3510,43 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
     }
   }
 
-  if((getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1)){
-    std::stringstream ss;
+  // if((getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1)){
+  //   std::stringstream ss;
 
-    ss << "tabulate_grad  "<< std::endl;
-    ss << "em  "<< std::endl;
-    for(int _i = 0; _i < _nnei * 4; _i++) {
-      ss << std::fixed << std::setprecision(9) << em[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "em_x  "<< std::endl;
-    for(int _i = 0; _i < _nnei; _i++) {
-      ss << std::fixed << std::setprecision(9) << em_x[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "dy_dem  "<< std::endl;
-    for(int _i = 0; _i < _nnei; _i++) {
-      ss << std::fixed << std::setprecision(9) << dy_dem[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "dy_dem_x  "<< std::endl;
-    for(int _i = 0; _i < _nnei * 4; _i++) {
-      ss << std::fixed << std::setprecision(9) << dy_dem_x[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "dy  "<< std::endl;
-    for(int _i = 0; _i < 4* last_layer_size; _i++) {
-      ss << std::fixed << std::setprecision(9) << dy[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "table  "<< std::endl;
-    for(int _i = 0; _i < 128; _i++) {
-      ss << std::fixed << std::setprecision(9) << _table[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    std::cout << ss.str() << std::endl;
-    fflush(stdout);
-  }
+  //   ss << "tabulate_grad  "<< std::endl;
+  //   ss << "em  "<< std::endl;
+  //   for(int _i = 0; _i < _nnei * 4; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << em[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "em_x  "<< std::endl;
+  //   for(int _i = 0; _i < _nnei; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << em_x[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "dy_dem  "<< std::endl;
+  //   for(int _i = 0; _i < _nnei; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << dy_dem[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "dy_dem_x  "<< std::endl;
+  //   for(int _i = 0; _i < _nnei * 4; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << dy_dem_x[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "dy  "<< std::endl;
+  //   for(int _i = 0; _i < 4* last_layer_size; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << dy[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "table  "<< std::endl;
+  //   for(int _i = 0; _i < 128; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << _table[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   std::cout << ss.str() << std::endl;
+  //   fflush(stdout);
+  // }
 
   #endif
 }
@@ -3685,24 +3834,25 @@ void DeepPot::prod_force_a_cpu(
     }
   }
 
-  if((getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1)){
-    std::stringstream ss;
+  // if((getenv("COMM_DEBUG_FLAG") != nullptr && atoi(getenv("COMM_DEBUG_FLAG")) == 1) && tid == 0){
+  //   std::stringstream ss;
 
-    ss << "prod_force_a_cpu  "<< std::endl;
-    ss << "net_deriv  "<< std::endl;
-    for(int _i = 0; _i < 4 * sel[type_i_in]; _i++) {
-      ss << std::fixed << std::setprecision(9) << net_deriv[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    ss << std::endl << "env_deriv  "<< std::endl;
-    for(int _i = 0; _i < 4 * sel[type_i_in] * 3; _i++) {
-      ss << std::fixed << std::setprecision(9) << env_deriv[_i] << " ";
-      if(_i % 100 == 0 && _i != 0) ss << std::endl;
-    }
-    std::cout << ss.str() << std::endl;
-    fflush(stdout);
+  //   ss << "prod_force_a_cpu  "<< std::endl;
+  //   ss << "net_deriv  "<< std::endl;
+  //   for(int _i = 0; _i < 4 * sel[type_i_in]; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << net_deriv[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   ss << std::endl << "env_deriv  "<< std::endl;
+  //   for(int _i = 0; _i < 4 * sel[type_i_in] * 3; _i++) {
+  //     ss << std::fixed << std::setprecision(9) << env_deriv[_i] << " ";
+  //     if(_i % 100 == 0 && _i != 0) ss << std::endl;
+  //   }
+  //   // std::cout << ss.str() << std::endl;
+  //   // fflush(stdout);
+  //   utils::logmesg(lmp, ss.str());
 
-  }
+  // }
 
   
 

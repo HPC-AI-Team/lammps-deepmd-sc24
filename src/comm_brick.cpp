@@ -975,7 +975,10 @@ void CommBrick::borders()
 
   // reset global->local map
 
-  if (map_style != Atom::MAP_NONE) atom->map_set();
+  if (map_style != Atom::MAP_NONE){ 
+    // utils::logmesg(lmp, "[info] map_style {} \n", map_style);
+    atom->map_set();
+  }
 }
 
 /* ----------------------------------------------------------------------

@@ -24,7 +24,8 @@
 #define T_THREAD 12
 #define NUMA_NUM 4
 #define TNI_NUM 6
-#define MAX_RING 12
+#define MAX_RING 11
+#define MAX_DIM_NODES 32
 
 namespace LAMMPS_NS {
 
