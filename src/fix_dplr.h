@@ -36,16 +36,13 @@ private:
     DeepPot **deep_pots_dipole;
 
     double* dvirial;
-    double* dipole_recd;
     double** thread_dvirial;
-    double** thread_dipole_recd;
     int ntypes;
     std::vector<int > dipole_sel_type;
     std::vector<int > dpl_type;
     std::vector<int > bond_type;
     std::map<int,int > type_asso;
     std::map<int,int > bk_type_asso;
-    // std::vector<FPTYPE> dipole_recd;
     std::vector<double> dfcorr_buff;
     double efield[3];
     double efield_fsum[4], efield_fsum_all[4];

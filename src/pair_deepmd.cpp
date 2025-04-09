@@ -238,10 +238,17 @@ void PairDeepMD::compute(int eflag, int vflag) {
             deep_pots_dipole[_tid]->reserve_buffer(max_nloc, max_nall);
           }
 
+          dipole_sel_type = deep_pots_dipole[0]->dipole_sel_type;
+
+
           // memory->create(dcoord,   atom->nmax * 3,"pair_deepmd:dcoord");
           memory->create(dvirial,   9,"pair_deepmd:dvirial");
           memory->create(thread_dvirial,        nthreads, 9,"pair_deepmd:thread_dvirial");
           memory->create(thread_dener,          nthreads, "pair_deepmd::thread_dener");
+          memory->create(dipole_recd,           max_nloc * 3, "pair_deepmd::thread_dener");
+          memory->create(thread_dipole_recd,    nthreads, max_nloc * 3 , "pair_deepmd::thread_dipole_recd");
+          bd_pairs.resize(max_nloc);
+          memory->create(bd_idx,    max_nall, "fix_dplr::bd_idx");
           // memory->create(thread_dforce,         nthreads, max_nall * 3, "pair_deepmd::thread_dforce");
           // memory->create(thread_dcoord,         nthreads, max_nall * 3, "pair_deepmd::thread_dcoord");
           // memory->create(thread_dtype,          nthreads, max_nall, "pair_deepmd::thread_dtype");
@@ -276,6 +283,15 @@ void PairDeepMD::compute(int eflag, int vflag) {
         #pragma omp barrier
       }
 
+
+      {
+        memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
+        deep_pots_dipole[tid]->splite_atom();
+        deep_pots_dipole[tid]->compute_dipole_R_grad(thread_dipole_recd[tid]);
+        
+        if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish deep_pots_dipole prepare tid {} \n", tid);
+      }
+      
       // create_dcoord(nall, tid);
       // #pragma omp parallel  
       {
@@ -284,67 +300,77 @@ void PairDeepMD::compute(int eflag, int vflag) {
         deep_pots[tid]->compute_ener (&thread_dener[tid], parallel_dforce, thread_dvirial[tid]);
        
         force_reduce(&(f[0][0]), nall, nthreads, 3, tid, scale[1][1]);
-        #pragma omp barrier
+      }
+      
+      #pragma omp barrier
+      if(tid == 0) {
 
-        if(tid == 0) {
-
-          if(DEBUG_MSG) utils::logmesg_arry(Pair::lmp, fmt::format("pair_deepmd reduce force \n"),f[0],nlocal*3, 1 );
-
-
-          // memset(&(f[0][0]), 0, nall * 3 * sizeof(double));
-          // for(int ii = 0; ii < 12; ii++)
-          //   if(DEBUG_MSG) print_v(nall, fmt::format("parallel_dforce {} : ", ii), parallel_dforce[ii].data());
+        if(DEBUG_MSG) utils::logmesg_arry(Pair::lmp, fmt::format("pair_deepmd reduce force \n"),f[0],nlocal*3, 1 );
 
 
-          // print_v(nall, fmt::format("parallel_dforce scale: "), f[0]);
-          
-          // // accumulate energy and virial
+        // memset(&(f[0][0]), 0, nall * 3 * sizeof(double));
+        // for(int ii = 0; ii < 12; ii++)
+        //   if(DEBUG_MSG) print_v(nall, fmt::format("parallel_dforce {} : ", ii), parallel_dforce[ii].data());
 
-          if (eflag) {
-            double dener = 0;
-            for(int i = 0;i < nthreads;i++){
-              dener += thread_dener[i];
-            }
-            eng_vdwl += scale[1][1] * dener;
+
+        // print_v(nall, fmt::format("parallel_dforce scale: "), f[0]);
+        
+        // // accumulate energy and virial
+
+        if(neighbor->ago == 0) {
+          init_valid_pairs();
+        }
+
+        memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
+
+        for(int ii = 0; ii < comm->nthreads; ii++) {
+          for(int jj = 0; jj < 3 * nlocal; jj++) 
+            dipole_recd[jj] += thread_dipole_recd[ii][jj];
+        }
+
+        for (int ii = 0; ii < nbd_pairs; ++ii) {
+          for (int dd = 0; dd < 3; ++dd){
+            atom->x[bd_pairs[ii].second][dd] = atom->x[bd_pairs[ii].first][dd] + dipole_recd[bd_pairs[ii].first * 3 + dd];
           }
-
-          memset(dvirial, 0, sizeof(double) * 9);
-          if (vflag) {
-            for(int i = 0;i<nthreads;i++){
-              dvirial[0] += thread_dvirial[i][0];
-              dvirial[1] += thread_dvirial[i][1];
-              dvirial[2] += thread_dvirial[i][2];
-              dvirial[3] += thread_dvirial[i][3];
-              dvirial[4] += thread_dvirial[i][4];
-              dvirial[5] += thread_dvirial[i][5];
-              dvirial[6] += thread_dvirial[i][6];
-              dvirial[7] += thread_dvirial[i][7];
-              dvirial[8] += thread_dvirial[i][8];
-            }
-
-            virial[0] += 1.0 * dvirial[0] * scale[1][1];
-            virial[1] += 1.0 * dvirial[4] * scale[1][1];
-            virial[2] += 1.0 * dvirial[8] * scale[1][1];
-            virial[3] += 1.0 * dvirial[3] * scale[1][1];
-            virial[4] += 1.0 * dvirial[6] * scale[1][1];
-            virial[5] += 1.0 * dvirial[7] * scale[1][1];
-
-            // print_v(6, fmt::format("virial type_: "), virial);
-          }
-
-          // memset(f[0], 0, nlocal * sizeof(double) * 3);
-          // memset(atom->v[0], 0, nlocal * sizeof(double) * 3);
-          // memset(dvirial, 0, sizeof(double) * 9);
         }
 
 
-        #pragma omp barrier
+        if (eflag) {
+          double dener = 0;
+          for(int i = 0;i < nthreads;i++){
+            dener += thread_dener[i];
+          }
+          eng_vdwl += scale[1][1] * dener;
+        }
 
-        deep_pots_dipole[tid]->splite_atom();
-        deep_pots_dipole[tid]->compute_dipole_R_grad();
-        
-        if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish deep_pots_dipole prepare tid {} \n", tid);
-      } // end omp
+        memset(dvirial, 0, sizeof(double) * 9);
+        if (vflag) {
+          for(int i = 0;i<nthreads;i++){
+            dvirial[0] += thread_dvirial[i][0];
+            dvirial[1] += thread_dvirial[i][1];
+            dvirial[2] += thread_dvirial[i][2];
+            dvirial[3] += thread_dvirial[i][3];
+            dvirial[4] += thread_dvirial[i][4];
+            dvirial[5] += thread_dvirial[i][5];
+            dvirial[6] += thread_dvirial[i][6];
+            dvirial[7] += thread_dvirial[i][7];
+            dvirial[8] += thread_dvirial[i][8];
+          }
+
+          virial[0] += 1.0 * dvirial[0] * scale[1][1];
+          virial[1] += 1.0 * dvirial[4] * scale[1][1];
+          virial[2] += 1.0 * dvirial[8] * scale[1][1];
+          virial[3] += 1.0 * dvirial[3] * scale[1][1];
+          virial[4] += 1.0 * dvirial[6] * scale[1][1];
+          virial[5] += 1.0 * dvirial[7] * scale[1][1];
+
+          // print_v(6, fmt::format("virial type_: "), virial);
+        }
+
+        // memset(f[0], 0, nlocal * sizeof(double) * 3);
+        // memset(atom->v[0], 0, nlocal * sizeof(double) * 3);
+        // memset(dvirial, 0, sizeof(double) * 9);
+      }
 
       // for(int tid = 0; tid < nthreads; tid++){
       //   print_v(6, fmt::format("virial type_: "), virial);
@@ -665,6 +691,63 @@ void PairDeepMD::create_dcoord(int nall, int tid) {
     for (int dd = 0; dd < 3; ++dd) {
       dcoord[ii*3+dd] = x[ii][dd] - domain->boxlo[dd];
     }
+  }
+}
+
+
+void
+PairDeepMD::init_valid_pairs()
+{  
+  int nlocal = atom->nlocal;
+  int nghost = atom->nghost;
+  int nall = nlocal + nghost;
+  int **bondlist = neighbor->bondlist;
+  int nbondlist = neighbor->nbondlist;
+
+  nbd_pairs = 0;
+
+  for (int ii = 0; ii < nbondlist; ++ii) {
+    int idx0=-1, idx1=-1;
+    if ( ! binary_search(bond_type.begin(), bond_type.end(), bondlist[ii][2] - 1) ){
+      continue;
+    }
+    if (binary_search(dipole_sel_type.begin(), dipole_sel_type.end(), atom->type[bondlist[ii][0]]-1) && 
+          binary_search(dpl_type.begin(), dpl_type.end(), atom->type[bondlist[ii][1]]-1)
+	  ){
+      idx0 = bondlist[ii][0];
+      idx1 = bondlist[ii][1];
+    }
+    else if (binary_search(dipole_sel_type.begin(), dipole_sel_type.end(), atom->type[bondlist[ii][1]]-1)  &&
+	     binary_search(dpl_type.begin(), dpl_type.end(), atom->type[bondlist[ii][0]]-1)
+	  ){
+      idx0 = bondlist[ii][1];
+      idx1 = bondlist[ii][0];
+    }
+    else {
+      error->all(FLERR, "find a bonded pair the types of which are not associated");
+    }
+    if ( ! (idx0 < nlocal && idx1 < nlocal) ){
+      error->all(FLERR, "find a bonded pair that is not on the same processor, something should not happen");
+    }
+    bd_pairs[nbd_pairs].first = idx0;
+    bd_pairs[nbd_pairs].second = idx1;
+    nbd_pairs++;
+  }
+  if(DEBUG_MSG) {
+    std::string tmp;
+     tmp += "[info] bd_pairs ";
+     for(int i = 0; i < nbd_pairs ;i++) {
+        tmp += fmt::format("  {}:{}", bd_pairs[i].first, bd_pairs[i].second);
+        if(i != 0 && (i % 100 == 0)) tmp += "\n      ";
+     } 
+     utils::logmesg(Pair::lmp, "{} \n", tmp);
+  }
+
+  for(int i = 0; i < nall; i++) {
+    bd_idx[i] = -1;
+  }
+  for (int i = 0; i < nbd_pairs; ++i){
+    bd_idx[bd_pairs[i].first] = bd_pairs[i].second;
   }
 }
 

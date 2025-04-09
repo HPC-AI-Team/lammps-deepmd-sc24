@@ -1700,6 +1700,8 @@ void Thermo::compute_pe()
 {
   dvalue = pe->scalar;
   if (normflag) dvalue /= natoms;
+  // if(comm->me == 0)
+  //   utils::logmesg(lmp,"[info] energy {} \n", dvalue);
 }
 
 /* ---------------------------------------------------------------------- */

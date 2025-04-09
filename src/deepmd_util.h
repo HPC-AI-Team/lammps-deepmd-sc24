@@ -301,9 +301,9 @@ public:
 		double*	force,
 		double*	virial);
 
-  void compute_dipole_R_grad ();
+  void compute_dipole_R_grad (ENERGYTYPE *			dipole_);
 
-  void compute_dipole (double *ener,
+  void compute_dipole (
 		double*	force,
 		double*	virial);
 
@@ -324,14 +324,19 @@ public:
                       FPTYPE* &em_x,
                       FPTYPE* &em,
                       FPTYPE *out,
-                      const FPTYPE* _table);
+                      const FPTYPE* _table,
+                      FPTYPE* &_table_res,
+                      FPTYPE* &_table_res_grad);
 
                       
   void tabulateFusion_sve(int _loc, int _nnei,
                       FPTYPE* &em_x,
                       FPTYPE* &em,
                       FPTYPE *out,
-                      const FPTYPE* _table);
+                      const FPTYPE* _table,
+                      FPTYPE* &_table_res,
+                      FPTYPE* &_table_res_grad);
+
 
   void tabulate_fusion_grad_cpu_packing(int _nloc, int _nnei,
                       FPTYPE *dy_dem_x, 
@@ -339,14 +344,18 @@ public:
                       const FPTYPE * _table, 
                       FPTYPE *em_x, 
                       FPTYPE *em, 
-                      FPTYPE *dy) ;
+                      FPTYPE *dy,
+                      FPTYPE* &_table_res,
+                      FPTYPE* &_table_res_grad) ;
   void tabulate_fusion_grad_cpu_packing_sve(int _nloc, int _nnei,
                       FPTYPE *dy_dem_x, 
                       FPTYPE *dy_dem,
                       const FPTYPE * _table, 
                       FPTYPE *em_x, 
                       FPTYPE *em, 
-                      FPTYPE *dy) ;
+                      FPTYPE *dy,
+                      FPTYPE* &_table_res,
+                      FPTYPE* &_table_res_grad) ;
 
   void tabulateFusion_v1_sve(int _loc, int _nnei,
                       FPTYPE* &em_x,
@@ -512,6 +521,7 @@ private:
   FPTYPE* dextf;
   
   FPTYPE*    ori_dipole;
+  FPTYPE*    out_dipole;
   int*    ori_datype;
   FPTYPE* ori_dcoord;
   double* ori_dforce;
@@ -519,6 +529,8 @@ private:
 
   FPTYPE** rij, **r_matrix, **r_matrix_deriv;
   FPTYPE** s_vector;
+  FPTYPE** table_res;
+  FPTYPE** table_res_grad;
 
   FPTYPE** descrptor;
   FPTYPE** rg_silce;

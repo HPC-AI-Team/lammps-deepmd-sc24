@@ -117,6 +117,9 @@ FixDPLR::FixDPLR(LAMMPS *lmp, int narg, char **arg)
   if(comm->me == 0) utils::logmesg_arry(lmp, "[INFO] fix_dplr dpl_type", dpl_type.data(), dpl_type.size(), 1);
   // set comm size needed by this fix
   comm_reverse = 3;
+
+  pair_deepmd->dpl_type = dpl_type;
+  pair_deepmd->bond_type = bond_type;
 }
 
 int FixDPLR::setmask()
@@ -150,8 +153,6 @@ void FixDPLR::setup_pre_force(int vflag){
 
   memory->create(dvirial,               9,"fix_dplr:dvirial");
   memory->create(thread_dvirial,        comm->nthreads, 9,"fix_dplr:thread_dvirial");
-  memory->create(dipole_recd,           max_nloc * 3, "fix_dplr::thread_dener");
-  memory->create(thread_dipole_recd,    comm->nthreads, max_nloc * 3 , "fix_dplr::thread_dipole_recd");
   
   bd_pairs.resize(max_nloc);
   memory->create(bd_idx,    max_nall, "fix_dplr::bd_idx");
@@ -170,8 +171,19 @@ FixDPLR::init_valid_pairs()
 
   nbd_pairs = 0;
 
+  if(DEBUG_MSG) utils::logmesg(lmp, "[info] init_valid_pairs nbondlist {} nlocal {} nall {} \n", nbondlist, nlocal, nall);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, "bond_type", bond_type.data(), bond_type.size(), 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, "dpl_type", dpl_type.data(), dpl_type.size(), 1);
+  if(DEBUG_MSG) utils::logmesg_arry(lmp, "dipole_sel_type", dipole_sel_type.data(), dipole_sel_type.size(), 1);
+
+
   for (int ii = 0; ii < nbondlist; ++ii) {
     int idx0=-1, idx1=-1;
+
+    // if(DEBUG_MSG) 
+      // utils::logmesg(lmp, "[info] init_valid_pairs nbd_pairs {} bondlist {} {} {} atype {} {}\n", 
+      //       nbd_pairs, bondlist[ii][0],bondlist[ii][1],bondlist[ii][2], atom->type[bondlist[ii][0]]-1, atom->type[bondlist[ii][1]]-1);
+
     if ( ! binary_search(bond_type.begin(), bond_type.end(), bondlist[ii][2] - 1) ){
       continue;
     }
@@ -188,15 +200,20 @@ FixDPLR::init_valid_pairs()
       idx1 = bondlist[ii][0];
     }
     else {
-      error->all(FLERR, "find a bonded pair the types of which are not associated");
+      error->one(FLERR, "find a bonded pair the types of which are not associated idx {} {} ", idx0, idx1);
     }
     if ( ! (idx0 < nlocal && idx1 < nlocal) ){
-      error->all(FLERR, "find a bonded pair that is not on the same processor, something should not happen");
+      error->one(FLERR, "find a bonded pair that is not on the same processor, something should not happen idx {} {} ", idx0, idx1);
     }
     bd_pairs[nbd_pairs].first = idx0;
     bd_pairs[nbd_pairs].second = idx1;
     nbd_pairs++;
+
+    // if(DEBUG_MSG) utils::logmesg(lmp, "[info] init_valid_pairs nbd_pairs {} \n", nbd_pairs);
   }
+
+  // if(DEBUG_MSG) utils::logmesg(lmp, "[info] out for nbd_pairs {} \n", nbd_pairs);
+
   if(DEBUG_MSG) {
     std::string tmp;
      tmp += "[info] bd_pairs ";
@@ -217,7 +234,7 @@ FixDPLR::init_valid_pairs()
 
 void FixDPLR::post_integrate()
 {
-  // double **x = atom->x;
+  double **x = atom->x;
   double **v = atom->v;
   // int *type = atom->type;
   // int nlocal = atom->nlocal;
@@ -232,6 +249,7 @@ void FixDPLR::post_integrate()
     int idx1 = bd_pairs[ii].second;
     for (int dd = 0; dd < 3; ++dd){
       v[idx1][dd] = v[idx0][dd] ;
+      x[idx1][dd] = x[idx0][dd] ;
     }
   }
 }
@@ -239,20 +257,22 @@ void FixDPLR::post_integrate()
 void FixDPLR::pre_force(int vflag)
 {
 
-    // double **x = atom->x;
+  double **x = atom->x;
   int *type = atom->type;
   int nlocal = atom->nlocal;
   int nghost = atom->nghost;
   int nall = nlocal + nghost;
 
   if(neighbor->ago == 0) {
+    if(DEBUG_MSG) utils::logmesg(lmp, "[INFO] into fixDPLR preforce\n");
+
     init_valid_pairs();
-    atom->nlocal_real = 0;
-    for(int i = 0; i < nlocal; i++) {
-      if(atom->type[i] <= ntypes)  {
-        atom->nlocal_real++;
-      }
-    }
+    // atom->nlocal_real = 0;
+    // for(int i = 0; i < nlocal; i++) {
+    //   if(atom->type[i] <= ntypes)  {
+    //     atom->nlocal_real++;
+    //   }
+    // }
   }
 }
 
@@ -292,12 +312,12 @@ void FixDPLR::post_force(int vflag)
 
     // #pragma omp barrier
 
-    memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
+    // memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
 
     deep_pots_dipole[tid]->shuffer_dextf(bd_idx, fele);
     double *parallel_dforce = pppm_dplr->f_lr[0] + tid * nall * 3;
     memset(parallel_dforce, 0, sizeof(double) * nall * 3);
-    deep_pots_dipole[tid]->compute_dipole(thread_dipole_recd[tid], parallel_dforce, thread_dvirial[tid]);
+    deep_pots_dipole[tid]->compute_dipole(parallel_dforce, thread_dvirial[tid]);
 
     pair_deepmd->force_reduce(&(pppm_dplr->f_lr[0][0]), nall, comm->nthreads, 3, tid, 1.);
 
@@ -311,7 +331,7 @@ void FixDPLR::post_force(int vflag)
   for (int ii = 0; ii < nbd_pairs; ++ii){
     for (int dd = 0; dd < 3; ++dd){
       pppm_dplr->f_lr[bd_pairs[ii].first][dd] += fele[bd_pairs[ii].second*3+dd];
-    }    
+    }
   }
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force add bonded \n"), pppm_dplr->f_lr[0], 3*nlocal, 1 );
@@ -321,8 +341,11 @@ void FixDPLR::post_force(int vflag)
     if(atom->type[ii] > ntypes) continue;           
     for (int dd = 0; dd < 3; ++dd){
       pppm_dplr->f_lr[ii][dd] += fele[ii*3+dd];
-    }    
+    }
   }
+
+  // utils::logmesg_arry_x(lmp,fmt::format("[info] postforce dfcorr ntimestep {} \n", update->ntimestep), atom->f[0], atom->nlocal * 3, 1);
+
 
   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force add fele \n"), pppm_dplr->f_lr[0], 3*nlocal, 1 );
 
@@ -341,27 +364,6 @@ void FixDPLR::post_force(int vflag)
 
   
   if (vflag) {
-    memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
-
-    for(int ii = 0; ii < comm->nthreads; ii++){
-      for(int jj = 0; jj < 3 * nlocal; jj++) 
-        dipole_recd[jj] += thread_dipole_recd[ii][jj];
-    }  
-
-    // for (int ii = 0; ii < nbd_pairs; ++ii){
-    //   int idx0 = bd_pairs[ii].first;
-    //   int idx1 = bd_pairs[ii].second;
-    //   for (int dd = 0; dd < 3; ++dd) {
-    //     dipole_recd[idx0*3+dd] = thread_dipole_recd[0][idx0*3+dd];
-    //   }
-    // }
-
-    // for(int ii = 0; ii < comm->nthreads; ii++){
-    //   if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force thread_dipole_recd tid {} ", ii),thread_dipole_recd[ii], 3*nlocal, 1 );
-    // }
-
-    if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dipole_recd \n"),dipole_recd, 3*nlocal, 1 );
-
     memset(dvirial, 0, sizeof(double) * 9);
     
     for(int ii = 0;ii < comm->nthreads; ii++){
@@ -369,6 +371,8 @@ void FixDPLR::post_force(int vflag)
         dvirial[jj] += thread_dvirial[ii][jj];
     }  
     if(DEBUG_MSG) utils::logmesg_arry(lmp, fmt::format("fix post_force dvirial \n"),dvirial,9, 1 );
+
+    double* dipole_recd = pair_deepmd->dipole_recd;
 
     for (int ii = 0; ii < nbd_pairs; ++ii){
       int idx0 = bd_pairs[ii].first;

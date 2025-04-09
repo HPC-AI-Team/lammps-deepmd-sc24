@@ -172,7 +172,7 @@ void Verlet::setup(int flag)
 
   if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
 
-
+  // utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
 
 
   modify->setup(vflag);
@@ -253,7 +253,7 @@ void Verlet::run(int n)
       }
       timer->stamp();
       comm->exchange();
-      if (sortflag && ntimestep >= atom->nextsort) atom->sort();
+      // if (sortflag && ntimestep >= atom->nextsort) atom->sort();
       comm->borders();
       if (triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
       timer->stamp(Timer::COMM);
@@ -269,12 +269,17 @@ void Verlet::run(int n)
       }
     }
 
+    if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] atom x nall \n"), atom->x[0], (atom->nlocal+atom->nghost) * 3, 1);
+
+
     // force computations
     // important for pair to come before bonded contributions
     // since some bonded potentials tally pairwise energy/virial
     // and Pair:ev_tally() needs to be called before any tallying
 
     force_clear();
+
+    // utils::logmesg_arry_x(lmp,fmt::format("[info] atom x after force_clear \n"), atom->x[0], (atom->nlocal+atom->nghost) * 3, 1);
 
     // self_timer->stamp();
     // MPI_Barrier(world);
@@ -309,6 +314,9 @@ void Verlet::run(int n)
 
     if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] after pair virial \n"), force->pair->virial, 6, 1);
 
+    // utils::logmesg_arry_x(lmp,fmt::format("[info] atom x before kspace \n"), atom->x[0], (atom->nlocal) * 3, 1);
+
+
 
     if (kspace_compute_flag) {
       force->kspace->compute(eflag,vflag);
@@ -325,7 +333,7 @@ void Verlet::run(int n)
     // reverse communication of forces
 
     timer->stamp();
-\
+
     if (force->newton) {
       comm->reverse_comm();
       timer->stamp(Timer::COMM);
@@ -333,7 +341,7 @@ void Verlet::run(int n)
 
     if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
 
-
+    // utils::logmesg_arry_x(lmp,fmt::format("[info] before postforce ntimestep {} \n", ntimestep), atom->f[0], atom->nlocal * 3, 1);
 
     // force modifications, final time integration, diagnostics
 
@@ -356,7 +364,61 @@ void Verlet::run(int n)
       output->write(ntimestep);
       timer->stamp(Timer::OUTPUT);
     }
+
+
+    // accuracy test
+    {
+
+      // std::string mesg = "_f = [";
+      // for(int i = 0; i < 384; i++) {
+      //   mesg += fmt::format(" {}, {}, {}", atom->f[i][0], atom->f[i][1], atom->f[i][2]);
+      //   if(i != atom->nlocal - 1) mesg += ", ";
+      // }
+      // mesg += "]\n";
+      // utils::logmesg(lmp,mesg);
+  
+      // utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), atom->tag, atom->nlocal, 1);
+  
+      // double all_f[512*3];
+      // std::vector<int> all_tag(512);
+      // std::vector<int> all_type(512);
+      // int nlocal_nodes[48];
+      // int  recvcounts[48];
+      // int   displs[48];
+      // MPI_Allgather(&atom->nlocal,1,MPI_INT,nlocal_nodes,1,MPI_INT,MPI_COMM_WORLD);
+      
+      // for(int i = 0; i < 48; i++) recvcounts[i] = nlocal_nodes[i] * 3;
+      // displs[0] = 0;
+      // for (int i = 1; i < 48; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
+      // MPI_Gatherv(atom->f[0], atom->nlocal * 3, MPI_DOUBLE, all_f, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  
+      // for(int i = 0; i < 48; i++) recvcounts[i] = nlocal_nodes[i];
+      // displs[0] = 0;
+      // for (int i = 1; i < 48; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
+      // MPI_Gatherv(atom->tag, atom->nlocal, MPI_INT, all_tag.data(), recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
+      // MPI_Gatherv(atom->type, atom->nlocal, MPI_INT, all_type.data(), recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
+  
+      // std::string mesg = "_f = [";
+      // for(int i = 1; i < 385; i++) {
+      //   for(int j = 0; j < 512; j++) {
+      //     if(all_tag[j] == i) {
+      //       mesg += fmt::format(" {}, {}, {}", all_f[j*3+0], all_f[j*3+1], all_f[j*3+2]);
+      //       if(i != 384) mesg += ", ";
+      //       continue;
+      //     }
+      //   }
+      // }
+      // mesg += "]\n";
+      // utils::logmesg(lmp,mesg);
+  
+      // utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), all_tag.data(), 512, 1);
+      // utils::logmesg_arry(lmp,fmt::format("[info ]all_type \n"), all_type.data(), 512, 1);
+    }
+
   }
+
+  if (n_post_integrate) modify->post_integrate();
+
 }
 
 /* ---------------------------------------------------------------------- */

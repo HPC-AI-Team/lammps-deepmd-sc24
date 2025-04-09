@@ -32,9 +32,6 @@ using namespace LAMMPS_NS;
 
 enum{ENER_TYPE, DIPOLE_TYPE};
 
-
-
-
 inline void locate_xx(
     const FPTYPE& lower, 
     const FPTYPE& upper,
@@ -937,6 +934,7 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
   ori_dcoord = new FPTYPE[_max_nall * 3];           memset(ori_dcoord, 0, _max_nall * 3 * sizeof(FPTYPE));
   ori_datype = new int[_max_nall];                  memset(ori_datype, 0, _max_nall     * sizeof(int));
   ori_dipole = new FPTYPE[_max_nloc * 3];              memset(ori_dipole, 0, _max_nloc * 3     * sizeof(FPTYPE));
+  out_dipole = new FPTYPE[_max_nloc * 3];              memset(out_dipole, 0, _max_nloc * 3     * sizeof(FPTYPE));
 
   rij = new FPTYPE*[ntypes*ntypes];
   r_matrix = new FPTYPE*[ntypes*ntypes];
@@ -973,11 +971,15 @@ void DeepPot::reserve_buffer(int _max_nloc, int _max_nall) {
 
   s_vector_grad = new FPTYPE*[ntypes*ntypes];
   r_matrix_grid = new FPTYPE*[ntypes*ntypes];
+  table_res = new FPTYPE*[ntypes*ntypes];
+  table_res_grad = new FPTYPE*[ntypes*ntypes];
   for(int dim = 0; dim < 3; dim++) r_matrix_grid_3d[dim] = new FPTYPE*[ntypes*ntypes];
   for(int i = 0; i < ntypes*ntypes; i++) {
   
     s_vector_grad[i] = new FPTYPE[_max_nloc * max_nnei];  memset(s_vector_grad[i], 0, _max_nloc*max_nnei*sizeof(FPTYPE)); 
     r_matrix_grid[i] = new FPTYPE[_max_nloc * max_nnei * 4];  memset(r_matrix_grid[i], 0, _max_nloc*max_nnei*4*sizeof(FPTYPE)); 
+    table_res[i] = new FPTYPE[_max_nloc * max_nnei*last_layer_size];  memset(table_res[i], 0, _max_nloc*max_nnei*last_layer_size*sizeof(FPTYPE)); 
+    table_res_grad[i] = new FPTYPE[_max_nloc * max_nnei*last_layer_size];  memset(table_res_grad[i], 0, _max_nloc*max_nnei*last_layer_size*sizeof(FPTYPE)); 
     for(int dim = 0; dim < 3; dim++) {r_matrix_grid_3d[dim][i] = new FPTYPE[_max_nloc * max_nnei * 4];  memset(r_matrix_grid_3d[dim][i], 0, _max_nloc*max_nnei*4*sizeof(FPTYPE)); }
   }
   
@@ -1362,7 +1364,7 @@ void DeepPot::load_data_from_dat_water_dipole(std::string graph_path) {
 
     std_ones       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     std_ones[i]       = (FPTYPE)pb_data.std_ones[i];
     avg_zero       = new FPTYPE[2*552]   ;    for(int i = 0; i < 2*552; i++)     avg_zero[i]       = (FPTYPE)pb_data.avg_zero[i];
-    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)        c_table_info[i]   = (FPTYPE)pb_data.c_table_info[i];
+    c_table_info   = new FPTYPE[6]       ;    for(int i = 0; i < 6; i++)         c_table_info[i]   = (FPTYPE)pb_data.c_table_info[i];
 
     for(int type_i = 0; type_i < ntypes*ntypes; type_i++) {
       c_table[type_i]     = new FPTYPE[1360*768];    for(int i = 0; i < 1360*768; i++) c_table[type_i][i]     = (FPTYPE)pb_data.c_table[type_i][i];
@@ -1685,7 +1687,7 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
         avg_zero, std_ones,
         grad_f_data);
 
-      // if(comm->me == 0) store_pb_data_water_dipole();      
+      if(comm->me == 0) store_pb_data_water_dipole();      
       
     #else
       error->all(FLERR,"Illegal graph_path");
@@ -1711,8 +1713,6 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
 
   int _types = MODEL_TYPE == ENER_TYPE ? ntypes : dipole_sel_type.size();
   for(int i = 0; i < _types * ntypes; i++) {
-    // int N = (c_table_info_pair[1] - c_table_info_pair[0]) / c_table_info_pair[3] + 
-    //                       (c_table_info_pair[2] - c_table_info_pair[1]) / c_table_info_pair[4];
     #ifdef HIGH_PREC
       convert_H_W(c_table[i], 1360, 8, 16, 6);
     #else 
@@ -1723,7 +1723,6 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
     std_ones[i] = 1./std_ones[i];
   }
   
-
   if(comm->me == 0) utils::logmesg(lmp, fmt::format("[info] table_info  : {} {} {} {} {} {} \n", c_table_info[0], c_table_info[1],
         c_table_info[2], c_table_info[3],c_table_info[4], c_table_info[5]));
 
@@ -1733,12 +1732,13 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   // MPI_Finalize();
 }
 
-void DeepPot::compute_dipole_R_grad () {
+void DeepPot::compute_dipole_R_grad (ENERGYTYPE *			dipole_) {
   // fwd_map，存放 real atom在新的表里的位置
   // bkw_map，存放 所有的 real atom
     // get Descriptor
 
   if (nloc == 0) {
+    memset(dipole_, 0, sizeof(double) * 3 * nloc);
     return;
   }
 
@@ -1755,15 +1755,24 @@ void DeepPot::compute_dipole_R_grad () {
     fitting_net_dipole_R_grad(type_i);
   }
 
+  memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
+
+  atommap.backward (ori_dipole, layer_final_qmat, 3);
+
+  for(int local_index = 0; local_index < nloc; local_index++) {
+    int global_index = backward_index_map[local_index];
+    dipole_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
+    dipole_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
+    dipole_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
+  }
+
   if(DEBUG_DP) utils::logmesg(lmp, "[INFO] finish compute_dipole_R_grad tid {} \n");
-
-
 
 
   return;
 }
 
-void DeepPot::compute_dipole (ENERGYTYPE *			dener_,
+void DeepPot::compute_dipole (
   double*	dforce_,
   double*	dvirial_) {
 
@@ -1771,7 +1780,7 @@ void DeepPot::compute_dipole (ENERGYTYPE *			dener_,
   if(DEBUG_DP) utils::logmesg(lmp, "[INFO] deepmd compute tid {} MODEL_TYPE {} nloc {} \n", tid, MODEL_TYPE, nloc);
 
   if (nloc == 0) {
-    memset(dener_, 0, sizeof(double) * 3 * nloc);
+    // memset(dipole, 0, sizeof(double) * 3 * nloc);
     memset(dvirial_, 0, 9 * sizeof(double));
     return;
   }
@@ -1789,20 +1798,20 @@ void DeepPot::compute_dipole (ENERGYTYPE *			dener_,
   if(DEBUG_DP) if(tid == 0)  print_v(nloc * 3, fmt::format("prod_force_a_cpu dforce \n"), dforce);
   if(DEBUG_DP) if(tid == 0)  print_v(9, fmt::format("prod_force_a_cpu dvirial \n"), dvirial);
 
-  memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
+  // memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
 
-  atommap.backward (ori_dipole, layer_final_qmat, 3);
+  // atommap.backward (ori_dipole, layer_final_qmat, 3);
 
-  for(int local_index = 0; local_index < nloc; local_index++) {
-    int global_index = backward_index_map[local_index];
-    dener_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
-    dener_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
-    dener_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
-  }
+  // for(int local_index = 0; local_index < nloc; local_index++) {
+  //   int global_index = backward_index_map[local_index];
+  //   dener_[global_index * 3 + 0] = ori_dipole[local_index * 3 + 0];
+  //   dener_[global_index * 3 + 1] = ori_dipole[local_index * 3 + 1];
+  //   dener_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
+  // }
 
-  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force layer_final_qmat \n"),layer_final_qmat, 3*nloc, 1 );
-  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force ori_dipole \n"),ori_dipole, 3*nloc, 1 );
-  if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force dener_ \n"),dener_, 3*nloc, 1 );
+  // if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force layer_final_qmat \n"),layer_final_qmat, 3*nloc, 1 );
+  // if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force ori_dipole \n"),ori_dipole, 3*nloc, 1 );
+  // if(DEBUG_MSG) if(tid == 0) utils::logmesg_arry(lmp, fmt::format("fix post_force dener_ \n"),dener_, 3*nloc, 1 );
 
   memcpy(ori_dforce, dforce, nall * 3 * sizeof(double));
   memcpy(dvirial_, dvirial, 9 * sizeof(double));
@@ -2002,8 +2011,8 @@ void DeepPot::embedding_net(int type_i) {
     int t_ptr = type_i * ntypes + type_i_in;
 
     if(comm->tabulate_flag == 5) {
-      tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
-      // tabulateFusion(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
+      tabulateFusion_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr], table_res[t_ptr], table_res_grad[t_ptr]);
+      // tabulateFusion(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr], table_res[t_ptr], table_res_grad[t_ptr]);
     } else if(comm->tabulate_flag == 1) {
       tabulateFusion_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion[type_i], c_table[t_ptr]);
     }
@@ -2058,11 +2067,15 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
 
   t_timer->stamp();
 
+  #ifndef HIGH_PREC
   if(comm->fp16_flag) {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
   } else {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   }
+  #else 
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+  #endif
 
   t_timer->stamp(Timer::MATMUL_ADD_0);
 
@@ -2160,11 +2173,15 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
     t_timer->stamp(Timer::FAST_TANH_GRAD);
     // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
     
+    #ifndef HIGH_PREC
     if(comm->fp16_flag){
       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, descrptor_grad, gemm_fp16_buf);
     } else {
       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
     }
+    #else
+      matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
+    #endif
     
     if(DEBUG_DP) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("dipole descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
     
@@ -2213,8 +2230,10 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
       int t_ptr = type_i * ntypes + type_i_in;
     
       if(comm->tabulate_flag == 5) {
+        // tabulate_fusion_grad_cpu_packing(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
+        //       c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad, table_res[t_ptr], table_res_grad[t_ptr]);
         tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
-              c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+              c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad, table_res[t_ptr], table_res_grad[t_ptr]);
       } else if(comm->tabulate_flag == 1) {
         tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid_3d[dim][t_ptr], 
               c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
@@ -2263,11 +2282,15 @@ void DeepPot::fitting_net_normal(int type_i) {
 
   t_timer->stamp();
 
+  #ifndef HIGH_PREC
   if(comm->fp16_flag) {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
   } else {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   }
+  #else 
+    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
+  #endif
 
   t_timer->stamp(Timer::MATMUL_ADD_0);
 
@@ -2363,11 +2386,15 @@ void DeepPot::fitting_net_normal(int type_i) {
   t_timer->stamp(Timer::FAST_TANH_GRAD);
   // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
   
+  #ifndef HIGH_PREC
   if(comm->fp16_flag){
     matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, descrptor_grad, gemm_fp16_buf);
   } else {
     matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
   }
+  #else
+    matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
+  #endif
   
   if(DEBUG_DP) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
   
@@ -2406,8 +2433,10 @@ void DeepPot::fitting_net_normal(int type_i) {
     int t_ptr = type_i * ntypes + type_i_in;
   
     if(comm->tabulate_flag == 5) {
+      // tabulate_fusion_grad_cpu_packing(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
+      //       c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad, table_res[t_ptr], table_res_grad[t_ptr]);
       tabulate_fusion_grad_cpu_packing_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
-            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
+            c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad, table_res[t_ptr], table_res_grad[t_ptr]);
     } else if(comm->tabulate_flag == 1) {
       tabulate_fusion_grad_cpu_packing_v1_sve(type_natoms[type_i], sel[type_i_in], s_vector_grad[t_ptr], r_matrix_grid[t_ptr], 
             c_table[t_ptr], s_vector[t_ptr], r_matrix[t_ptr], rg_fusion_grad);
@@ -2830,7 +2859,10 @@ void DeepPot::tabulateFusion(int _loc,
   FPTYPE* &em_x, // sij
   FPTYPE* &em, // Ri
   FPTYPE *out,
-  const FPTYPE* _table) {
+  const FPTYPE* _table,
+  FPTYPE* &_table_res,
+  FPTYPE* &_table_res_grad
+) {
 
   // 此类local atom的数量
   const FPTYPE lower   = c_table_info[0];
@@ -2849,6 +2881,8 @@ void DeepPot::tabulateFusion(int _loc,
   // for every atom, execute a small manual gemm ~
   // double * res = new double[4 * last_layer_size];
   // #pragma omp parallel for
+
+  
 
   for (int ii = 0; ii < _loc; ii++) { // 对loc atom 遍历
     FPTYPE ll[4] = {0};
@@ -2872,6 +2906,9 @@ void DeepPot::tabulateFusion(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       for (int kbs = 0; kbs < last_layer_size; kbs+=TABLE_STEP) {
         int kbe = kbs + TABLE_STEP;
         const FPTYPE *table0 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 0];
@@ -2887,7 +2924,11 @@ void DeepPot::tabulateFusion(int _loc,
           FPTYPE a3  = table3[kk-kbs];
           FPTYPE a4  = table4[kk-kbs];
           FPTYPE a5  = table5[kk-kbs];
-          FPTYPE var = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx; // 128 次 多项式拟合
+          FPTYPE var      = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx; // 128 次 多项式拟合
+          FPTYPE var_grad = (a1 + (2 * a2 + (3 * a3 + (4 * a4 + 5 * a5 * xx) * xx) * xx) * xx); // 128 次 多项式拟合
+
+          _res[kk] = var; 
+          _res_grad[kk] = var_grad; 
 
           if (unloop) {
             out0[kk] += (_nnei - jj) * var * ll[0];
@@ -2913,10 +2954,13 @@ void DeepPot::tabulateFusion(int _loc,
 #ifdef HIGH_PREC
 void DeepPot::tabulateFusion_sve(int _loc,
   int _nnei,
-  FPTYPE* &em_x,
-  FPTYPE* &em,
+  FPTYPE* &em_x, // sij
+  FPTYPE* &em, // Ri
   FPTYPE *out,
-  const FPTYPE* _table) {
+  const FPTYPE* _table,
+  FPTYPE* &_table_res,
+  FPTYPE* &_table_res_grad
+) {
 
   #ifdef __ARM_FEATURE_SVE
 
@@ -2953,7 +2997,14 @@ void DeepPot::tabulateFusion_sve(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       assert(last_layer_size % svcntd() == 0);
+      svfloat64_t vtwo = svdup_f64(2.);
+      svfloat64_t vthree = svdup_f64(3.);
+      svfloat64_t vfour = svdup_f64(4.);
+      svfloat64_t vfive = svdup_f64(5.);
 
       svbool_t ptrue = svptrue_b64();
       svfloat64_t vnei_sub_jj = svdup_f64((double(_nnei - jj)));
@@ -2962,6 +3013,10 @@ void DeepPot::tabulateFusion_sve(int _loc,
       svfloat64_t vxx3 = svmul_z(ptrue, vxx2, vxx);
       svfloat64_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
       svfloat64_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      svfloat64_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
+      svfloat64_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
+      svfloat64_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
+      svfloat64_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
       svfloat64_t vll0 = svdup_f64(ll[0]);
       svfloat64_t vll1 = svdup_f64(ll[1]);
       svfloat64_t vll2 = svdup_f64(ll[2]);
@@ -3014,6 +3069,29 @@ void DeepPot::tabulateFusion_sve(int _loc,
         svfloat64_t vout3_0 = svld1(ptrue, out3 + kk);
         svfloat64_t vout3_1 = svld1(ptrue, out3 + kk + svcntd());
 
+        svfloat64_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
+        svfloat64_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+        svfloat64_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
+        svfloat64_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
+        svfloat64_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
+        svfloat64_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
+        svfloat64_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
+        svfloat64_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+        svfloat64_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
+        svfloat64_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
+        svfloat64_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
+        svfloat64_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
+        svfloat64_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
+        svfloat64_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+
+        svst1_vnum(ptrue, _res, 0, vvar_0); 
+        svst1_vnum(ptrue, _res, 1, vvar_1); 
+        _res += svcntd() * 2;
+
+        svst1_vnum(ptrue, _res_grad, 0, tmp15_0); 
+        svst1_vnum(ptrue, _res_grad, 1, tmp15_1); 
+        _res_grad += svcntd() * 2;
+
         if(unloop){
           vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
           vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
@@ -3052,10 +3130,13 @@ void DeepPot::tabulateFusion_sve(int _loc,
 #else 
 void DeepPot::tabulateFusion_sve(int _loc,
   int _nnei,
-  FPTYPE* &em_x,
-  FPTYPE* &em,
+  FPTYPE* &em_x, // sij
+  FPTYPE* &em, // Ri
   FPTYPE *out,
-  const FPTYPE* _table) {
+  const FPTYPE* _table,
+  FPTYPE* &_table_res,
+  FPTYPE* &_table_res_grad
+) {
 
   const FPTYPE lower   = c_table_info[0];
   const FPTYPE upper   = c_table_info[1];
@@ -3078,21 +3159,7 @@ void DeepPot::tabulateFusion_sve(int _loc,
     FPTYPE* out2 = out + ii * last_layer_size * 4 + 2 * last_layer_size;
     FPTYPE* out3 = out + ii * last_layer_size * 4 + 3 * last_layer_size;
 
-    // int do_prefetch = prefetch_flag;
-    // if(do_prefetch) {
-    //   for(int jj = 0; jj < PREFETCH_SIZE; jj++) {
-    //     FPTYPE xx = em_x[ii * _nnei + jj]; 
-    //     int table_idx = 0;
-    //     locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);        
-    //     const float* TABLE = &_table[table_idx * last_layer_size * 6];
-    //     for(int kk = 0; kk < last_layer_size * 6 / svcntw(); kk++){
-    //       svprfb_vnum(ptrue, TABLE, kk, SV_PLDL2STRM) ;
-    //     }
-    //   }
-    // }
-    // void svprfb_vnum(svbool_t pg, const void *base, int64_t vnum, svprfop op) ;
-
-    for (int jj = 0; jj < _nnei; jj++) { 
+    for (int jj = 0; jj < _nnei; jj++) {
       ll[0] = em[ii * _nnei * 4 + jj * 4 + 0];
       ll[1] = em[ii * _nnei * 4 + jj * 4 + 1];
       ll[2] = em[ii * _nnei * 4 + jj * 4 + 2];
@@ -3105,7 +3172,15 @@ void DeepPot::tabulateFusion_sve(int _loc,
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       assert(last_layer_size % svcntw() == 0);
+
+      svfloat32_t vtwo = svdup_f32(2.f);
+      svfloat32_t vthree = svdup_f32(3.f);
+      svfloat32_t vfour = svdup_f32(4.f);
+      svfloat32_t vfive = svdup_f32(5.f);
 
       svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
       svfloat32_t vxx = svdup_f32(xx);
@@ -3113,6 +3188,10 @@ void DeepPot::tabulateFusion_sve(int _loc,
       svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
       svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
       svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      svfloat32_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
+      svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
+      svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
+      svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
       svfloat32_t vll0 = svdup_f32(ll[0]);
       svfloat32_t vll1 = svdup_f32(ll[1]);
       svfloat32_t vll2 = svdup_f32(ll[2]);
@@ -3165,6 +3244,31 @@ void DeepPot::tabulateFusion_sve(int _loc,
         svfloat32_t vout3_0 = svld1(ptrue, out3 + kk);
         svfloat32_t vout3_1 = svld1(ptrue, out3 + kk + svcntw());
 
+        svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
+        svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+
+        svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
+        svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
+        svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
+        svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
+        svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
+        svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+
+        svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
+        svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
+        svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
+        svfloat32_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
+        svfloat32_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
+        svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+
+        svst1_vnum(ptrue, _res, 0, vvar_0); 
+        svst1_vnum(ptrue, _res, 1, vvar_1); 
+        _res += svcntw() * 2;
+
+        svst1_vnum(ptrue, _res_grad, 0, tmp15_0); 
+        svst1_vnum(ptrue, _res_grad, 1, tmp15_1); 
+        _res_grad += svcntw() * 2;
+
         if(unloop){
           vout0_0 = svmla_z(ptrue, vout0_0, vvar_0, vll0_);
           vout0_1 = svmla_z(ptrue, vout0_1, vvar_1, vll0_);
@@ -3207,7 +3311,9 @@ void DeepPot::tabulate_fusion_grad_cpu_packing(
     const FPTYPE * _table, 
     FPTYPE *em_x, 
     FPTYPE *em, 
-    FPTYPE *dy) {
+    FPTYPE *dy,
+    FPTYPE* &_table_res,
+    FPTYPE* &_table_res_grad) {
   
   memset(dy_dem_x, 0.0, sizeof(FPTYPE) * _loc * _nnei);
   memset(dy_dem, 0.0, sizeof(FPTYPE) * _loc * _nnei * 4);
@@ -3236,8 +3342,8 @@ void DeepPot::tabulate_fusion_grad_cpu_packing(
       if (ago == xx) {
         unloop = true;
       }
-      int table_idx = 0;
-      locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
+      // int table_idx = 0;
+      // locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
       FPTYPE* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
 
@@ -3247,40 +3353,46 @@ void DeepPot::tabulate_fusion_grad_cpu_packing(
       FPTYPE dy_dem_2 = 0.0;
       FPTYPE dy_dem_3 = 0.0;
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       for (int kbs = 0; kbs < last_layer_size; kbs += TABLE_STEP){
         int kbe = kbs + TABLE_STEP;
-        const FPTYPE* table0 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 0];
-        const FPTYPE* table1 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 1];
-        const FPTYPE* table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
-        const FPTYPE* table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
-        const FPTYPE* table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
-        const FPTYPE* table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
+        // const FPTYPE* table0 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 0];
+        // const FPTYPE* table1 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 1];
+        // const FPTYPE* table2 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 2];
+        // const FPTYPE* table3 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 3];
+        // const FPTYPE* table4 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 4];
+        // const FPTYPE* table5 = &_table[table_idx * last_layer_size * 6 + kbs * 6 + TABLE_STEP * 5];
         for (int kk = kbs; kk < kbe; kk++) {
           rr[0] = dy0[kk];
           rr[1] = dy1[kk];
           rr[2] = dy2[kk];
           rr[3] = dy3[kk];
-          FPTYPE a0  = table0[kk-kbs]; 
-          FPTYPE a1  = table1[kk-kbs]; 
-          FPTYPE a2  = table2[kk-kbs]; 
-          FPTYPE a3  = table3[kk-kbs];
-          FPTYPE a4  = table4[kk-kbs];
-          FPTYPE a5  = table5[kk-kbs];
-          FPTYPE res = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx;
+          // FPTYPE a0  = table0[kk-kbs]; 
+          // FPTYPE a1  = table1[kk-kbs]; 
+          // FPTYPE a2  = table2[kk-kbs]; 
+          // FPTYPE a3  = table3[kk-kbs];
+          // FPTYPE a4  = table4[kk-kbs];
+          // FPTYPE a5  = table5[kk-kbs];
+          // FPTYPE var = a0 + (a1 + (a2 + (a3 + (a4 + a5 * xx) * xx) * xx) * xx) * xx;
+
+          FPTYPE var = _res[kk];
+          FPTYPE var_grad = _res_grad[kk];
 
           if (unloop) {
-            grad += (a1 + (2 * a2 + (3 * a3 + (4 * a4 + 5 * a5 * xx) * xx) * xx) * xx) * dot(ll, rr) * (_nnei - jj);
-            dy_dem_0 += res * rr[0] * (_nnei - jj);
-            dy_dem_1 += res * rr[1] * (_nnei - jj);
-            dy_dem_2 += res * rr[2] * (_nnei - jj);
-            dy_dem_3 += res * rr[3] * (_nnei - jj);
+            grad += var_grad * dot(ll, rr) * (_nnei - jj);
+            dy_dem_0 += var * rr[0] * (_nnei - jj);
+            dy_dem_1 += var * rr[1] * (_nnei - jj);
+            dy_dem_2 += var * rr[2] * (_nnei - jj);
+            dy_dem_3 += var * rr[3] * (_nnei - jj);
           }
           else {
-            grad += (a1 + (2 * a2 + (3 * a3 + (4 * a4 + 5 * a5 * xx) * xx) * xx) * xx) * dot(ll, rr);
-            dy_dem_0 += res * rr[0];
-            dy_dem_1 += res * rr[1];
-            dy_dem_2 += res * rr[2];
-            dy_dem_3 += res * rr[3];
+            grad += var_grad * dot(ll, rr);
+            dy_dem_0 += var * rr[0];
+            dy_dem_1 += var * rr[1];
+            dy_dem_2 += var * rr[2];
+            dy_dem_3 += var * rr[3];
           }
         }
       }
@@ -3313,13 +3425,15 @@ void DeepPot::tabulate_fusion_grad_cpu_packing(
 
 #ifdef HIGH_PREC
 void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
-    int _loc, int _nnei,
-    FPTYPE *dy_dem_x, 
-    FPTYPE *dy_dem,
-    const FPTYPE * _table, 
-    FPTYPE *em_x, 
-    FPTYPE *em, 
-    FPTYPE *dy) {
+  int _loc, int _nnei,
+  FPTYPE *dy_dem_x, 
+  FPTYPE *dy_dem,
+  const FPTYPE * _table, 
+  FPTYPE *em_x, 
+  FPTYPE *em, 
+  FPTYPE *dy,
+  FPTYPE* &_table_res,
+  FPTYPE* &_table_res_grad) {
   #ifdef __ARM_FEATURE_SVE
 
   memset(dy_dem_x, 0, sizeof(double) * _loc * _nnei);
@@ -3354,6 +3468,9 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       double* dy_dem_tmp = &dy_dem[ii * _nnei * 4 + jj * 4];
 
       svfloat64_t vgard = svdup_f64(0.);
@@ -3370,16 +3487,15 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
 
       svbool_t ptrue = svptrue_b64();
       svfloat64_t vnei_sub_jj = svdup_f64((double(_nnei - jj)));
-      svfloat64_t vxx = svdup_f64(xx);
-
-      svfloat64_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat64_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat64_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat64_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat64_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
-      svfloat64_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
-      svfloat64_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
-      svfloat64_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
+      // svfloat64_t vxx = svdup_f64(xx);
+      // svfloat64_t vxx2 = svmul_z(ptrue, vxx, vxx);
+      // svfloat64_t vxx3 = svmul_z(ptrue, vxx2, vxx);
+      // svfloat64_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
+      // svfloat64_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      // svfloat64_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
+      // svfloat64_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
+      // svfloat64_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
+      // svfloat64_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
       svfloat64_t vll0 = svdup_f64(ll[0]);
       svfloat64_t vll1 = svdup_f64(ll[1]);
       svfloat64_t vll2 = svdup_f64(ll[2]);
@@ -3398,55 +3514,63 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
         svfloat64_t vrr3_0 = svld1(ptrue, dy3 + kk);
         svfloat64_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntd());
 
-        const double* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat64_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat64_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat64_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat64_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat64_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat64_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat64_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat64_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat64_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat64_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat64_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat64_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+        // const double* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
+        // svfloat64_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
+        // svfloat64_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
+        // svfloat64_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
+        // svfloat64_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
+        // svfloat64_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
+        // svfloat64_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
+        // svfloat64_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
+        // svfloat64_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
+        // svfloat64_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
+        // svfloat64_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
+        // svfloat64_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
+        // svfloat64_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
 
         // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
-        svfloat64_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat64_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
-        svfloat64_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat64_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat64_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat64_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat64_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat64_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat64_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat64_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
-        svfloat64_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat64_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat64_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat64_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat64_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat64_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
-        svfloat64_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat64_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        // svfloat64_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        // svfloat64_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // svfloat64_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
+        // svfloat64_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
+        // svfloat64_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
+        // svfloat64_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
+        // svfloat64_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
+        // svfloat64_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
+        // svfloat64_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
+        // svfloat64_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        // svfloat64_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
+        // svfloat64_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
+        // svfloat64_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
+        // svfloat64_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
+        // svfloat64_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
+        // svfloat64_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        // svfloat64_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
+        // svfloat64_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+
+        svfloat64_t vres_0 = svld1_vnum(ptrue, _res, 0);
+        svfloat64_t vres_1 = svld1_vnum(ptrue, _res, 1);
+        _res += svcntd() * 2;
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
-        svfloat64_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
-        svfloat64_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
-        svfloat64_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
-        svfloat64_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
-        svfloat64_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
-        svfloat64_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
-        svfloat64_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
-        svfloat64_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
-        svfloat64_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
-        svfloat64_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
-        svfloat64_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
-        svfloat64_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
-        svfloat64_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
-        svfloat64_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+        // svfloat64_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
+        // svfloat64_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+        // svfloat64_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
+        // svfloat64_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
+        // svfloat64_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
+        // svfloat64_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
+        // svfloat64_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
+        // svfloat64_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+        // svfloat64_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
+        // svfloat64_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
+        // svfloat64_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
+        // svfloat64_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
+        // svfloat64_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
+        // svfloat64_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+
+        svfloat64_t tmp15_0 = svld1_vnum(ptrue, _res_grad, 0);
+        svfloat64_t tmp15_1 = svld1_vnum(ptrue, _res_grad, 1);
+        _res_grad += svcntd() * 2;
 
         // dot(ll, rr);
         svfloat64_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);
@@ -3553,13 +3677,15 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
 
 #else
 void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
-    int _loc, int _nnei,
-    FPTYPE *dy_dem_x, 
-    FPTYPE *dy_dem,
-    const FPTYPE * _table, 
-    FPTYPE *em_x, 
-    FPTYPE *em, 
-    FPTYPE *dy) {
+  int _loc, int _nnei,
+  FPTYPE *dy_dem_x, 
+  FPTYPE *dy_dem,
+  const FPTYPE * _table, 
+  FPTYPE *em_x, 
+  FPTYPE *em, 
+  FPTYPE *dy,
+  FPTYPE* &_table_res,
+  FPTYPE* &_table_res_grad) {
 
   memset(dy_dem_x, 0.0, sizeof(float) * _loc * _nnei);
   memset(dy_dem, 0.0, sizeof(float) * _loc * _nnei * 4);
@@ -3611,6 +3737,9 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
       int table_idx = 0;
       locate_xx(lower, upper, _max, stride0, stride1, xx, table_idx);
 
+      FPTYPE* _res = _table_res + ii * _nnei * last_layer_size + jj * last_layer_size;
+      FPTYPE* _res_grad = _table_res_grad + ii * _nnei * last_layer_size + jj * last_layer_size;
+
       // if(do_prefetch) {
       //   if(jj + PREFETCH_SIZE >= _nnei) do_prefetch = false;
       //   xx_next = em_x[ii * _nnei + jj + PREFETCH_SIZE];
@@ -3641,16 +3770,15 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
       svfloat32_t vfive = svdup_f32(5.f);
 
       svfloat32_t vnei_sub_jj = svdup_f32((double(_nnei - jj)));
-      svfloat32_t vxx = svdup_f32(xx);
-
-      svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
-      svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
-      svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
-      svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
-      svfloat32_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
-      svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
-      svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
-      svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
+      // svfloat32_t vxx = svdup_f32(xx);
+      // svfloat32_t vxx2 = svmul_z(ptrue, vxx, vxx);
+      // svfloat32_t vxx3 = svmul_z(ptrue, vxx2, vxx);
+      // svfloat32_t vxx4 = svmul_z(ptrue, vxx2, vxx2);
+      // svfloat32_t vxx5 = svmul_z(ptrue, vxx3, vxx2);
+      // svfloat32_t v2xx1 = svmul_z(ptrue, vtwo, vxx);
+      // svfloat32_t v3xx2 = svmul_z(ptrue, vthree, vxx2);
+      // svfloat32_t v4xx3 = svmul_z(ptrue, vfour, vxx3);
+      // svfloat32_t v5xx4 = svmul_z(ptrue, vfive, vxx4);
       svfloat32_t vll0 = svdup_f32(ll[0]);
       svfloat32_t vll1 = svdup_f32(ll[1]);
       svfloat32_t vll2 = svdup_f32(ll[2]);
@@ -3669,60 +3797,68 @@ void DeepPot::tabulate_fusion_grad_cpu_packing_sve(
         svfloat32_t vrr3_0 = svld1(ptrue, dy3 + kk);
         svfloat32_t vrr3_1 = svld1(ptrue, dy3 + kk + svcntw());
 
-        const float* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
-        svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
-        svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
-        svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
-        svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
-        svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
-        svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
-        svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
-        svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
-        svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
-        svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
-        svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
-        svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
+        // const float* TABLE = &_table[table_idx * last_layer_size * 6 + kk * 6];
+        // svfloat32_t va0_0 = svld1_vnum(ptrue, TABLE, 0);
+        // svfloat32_t va0_1 = svld1_vnum(ptrue, TABLE, 1);
+        // svfloat32_t va1_0 = svld1_vnum(ptrue, TABLE, 2);
+        // svfloat32_t va1_1 = svld1_vnum(ptrue, TABLE, 3);
+        // svfloat32_t va2_0 = svld1_vnum(ptrue, TABLE, 4);
+        // svfloat32_t va2_1 = svld1_vnum(ptrue, TABLE, 5);
+        // svfloat32_t va3_0 = svld1_vnum(ptrue, TABLE, 6);
+        // svfloat32_t va3_1 = svld1_vnum(ptrue, TABLE, 7);
+        // svfloat32_t va4_0 = svld1_vnum(ptrue, TABLE, 8);
+        // svfloat32_t va4_1 = svld1_vnum(ptrue, TABLE, 9);
+        // svfloat32_t va5_0 = svld1_vnum(ptrue, TABLE, 10);
+        // svfloat32_t va5_1 = svld1_vnum(ptrue, TABLE, 11);
 
         // double res = a0 + a1 * xx + a2 * xx2 + a3 * xx3 + a4 * xx4 + a5 * xx5;
-        svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
-        svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
+        // svfloat32_t tmp1_0 = svmla_z(ptrue, va0_0, va1_0, vxx);
+        // svfloat32_t tmp1_1 = svmla_z(ptrue, va0_1, va1_1, vxx);
 
-        svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
-        svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
-        svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
-        svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
-        svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
-        svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
-        svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
-        svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
+        // svfloat32_t tmp2_0 = svmul_z(ptrue, va2_0, vxx2);
+        // svfloat32_t tmp2_1 = svmul_z(ptrue, va2_1, vxx2);
+        // svfloat32_t tmp3_0 = svmul_z(ptrue, va3_0, vxx3);
+        // svfloat32_t tmp3_1 = svmul_z(ptrue, va3_1, vxx3);
+        // svfloat32_t tmp4_0 = svmul_z(ptrue, va4_0, vxx4);
+        // svfloat32_t tmp4_1 = svmul_z(ptrue, va4_1, vxx4);
+        // svfloat32_t tmp5_0 = svmul_z(ptrue, va5_0, vxx5);
+        // svfloat32_t tmp5_1 = svmul_z(ptrue, va5_1, vxx5);
 
-        svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
-        svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
-        svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
-        svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
-        svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
-        svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
+        // svfloat32_t tmp6_0 = svadd_z(ptrue, tmp1_0, tmp2_0);
+        // svfloat32_t tmp6_1 = svadd_z(ptrue, tmp1_1, tmp2_1);
+        // svfloat32_t tmp7_0 = svadd_z(ptrue, tmp3_0, tmp4_0);
+        // svfloat32_t tmp7_1 = svadd_z(ptrue, tmp3_1, tmp4_1);
+        // svfloat32_t tmp8_0 = svadd_z(ptrue, tmp6_0, tmp5_0);
+        // svfloat32_t tmp8_1 = svadd_z(ptrue, tmp6_1, tmp5_1);
 
-        svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
-        svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+        // svfloat32_t vres_0 = svadd_z(ptrue, tmp7_0, tmp8_0);
+        // svfloat32_t vres_1 = svadd_z(ptrue, tmp7_1, tmp8_1);
+
+        svfloat32_t vres_0 = svld1_vnum(ptrue, _res, 0);
+        svfloat32_t vres_1 = svld1_vnum(ptrue, _res, 1);
+        _res += svcntw() * 2;
 
         // a1 + 2 * a2 * xx + 3 * a3 * xx2 + 4 * a4 * xx3 + 5 * a5 *xx4
-        svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
-        svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
+        // svfloat32_t tmp9_0 = svmla_z(ptrue, va1_0, va2_0, v2xx1);
+        // svfloat32_t tmp9_1 = svmla_z(ptrue, va1_1, va2_1, v2xx1);
 
-        svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
-        svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
-        svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
-        svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
-        svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
-        svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
+        // svfloat32_t tmp10_0 = svmul_z(ptrue, va3_0, v3xx2);
+        // svfloat32_t tmp10_1 = svmul_z(ptrue, va3_1, v3xx2);
+        // svfloat32_t tmp11_0 = svmul_z(ptrue, va4_0, v4xx3);
+        // svfloat32_t tmp11_1 = svmul_z(ptrue, va4_1, v4xx3);
+        // svfloat32_t tmp12_0 = svmul_z(ptrue, va5_0, v5xx4);
+        // svfloat32_t tmp12_1 = svmul_z(ptrue, va5_1, v5xx4);
 
-        svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
-        svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
-        svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
-        svfloat32_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
-        svfloat32_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
-        svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+        // svfloat32_t tmp13_0 = svadd_z(ptrue, tmp9_0, tmp10_0);
+        // svfloat32_t tmp13_1 = svadd_z(ptrue, tmp9_1, tmp10_1);
+        // svfloat32_t tmp14_0 = svadd_z(ptrue, tmp11_0, tmp12_0);
+        // svfloat32_t tmp14_1 = svadd_z(ptrue, tmp11_1, tmp12_1);
+        // svfloat32_t tmp15_0 = svadd_z(ptrue, tmp13_0, tmp14_0); 
+        // svfloat32_t tmp15_1 = svadd_z(ptrue, tmp13_1, tmp14_1); 
+
+        svfloat32_t tmp15_0 = svld1_vnum(ptrue, _res_grad, 0);
+        svfloat32_t tmp15_1 = svld1_vnum(ptrue, _res_grad, 1);
+        _res_grad += svcntw() * 2;
 
         // dot(ll, rr);
         svfloat32_t tmp16_0 = svmul_z(ptrue, vll0, vrr0_0);

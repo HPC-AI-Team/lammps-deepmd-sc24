@@ -56,6 +56,23 @@
     svfloat32_t in##_14;  \
     svfloat32_t in##_15;  
 
+#define init_vec_15(in) \
+    svfloat32_t in##_0;   \
+    svfloat32_t in##_1;   \
+    svfloat32_t in##_2;   \
+    svfloat32_t in##_3;   \
+    svfloat32_t in##_4;   \
+    svfloat32_t in##_5;   \
+    svfloat32_t in##_6;   \
+    svfloat32_t in##_7;   \
+    svfloat32_t in##_8;   \
+    svfloat32_t in##_9;   \
+    svfloat32_t in##_10;  \
+    svfloat32_t in##_11;  \
+    svfloat32_t in##_12;  \
+    svfloat32_t in##_13;  \
+    svfloat32_t in##_14;
+
 #define init_vec_8(in) \
     svfloat32_t in##_0;   \
     svfloat32_t in##_1;   \
@@ -465,6 +482,16 @@
     in##_13 = svdup_f16(0.);  \
     in##_14 = svdup_f16(0.);  \
     in##_15 = svdup_f16(0.);  
+
+#define dup_0_8fp32(in) \
+    in##_0 = svdup_f32(0.);   \
+    in##_1 = svdup_f32(0.);   \
+    in##_2 = svdup_f32(0.);   \
+    in##_3 = svdup_f32(0.);   \
+    in##_4 = svdup_f32(0.);   \
+    in##_5 = svdup_f32(0.);   \
+    in##_6 = svdup_f32(0.);   \
+    in##_7 = svdup_f32(0.);
 
 #define init_vec_8f16(in) \
     svfloat16_t in##_0;   \

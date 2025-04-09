@@ -10,7 +10,7 @@
 
 // #define _TABULATE_FITTING
 
-#define HIGH_PREC
+// #define HIGH_PREC
 
 // #define TABLE_V1
 
@@ -359,328 +359,211 @@ inline void matmul_nx6_6x36_nt(const int M, const int N, const int K,
   }
 }
 
-
-inline void matmul_1x240_240x240(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
-
-  float *tmp_a, *tmp_b, *tmp_d;
-  int kk = 0;      
-
-  for(int mm = 0; mm < M; mm++) {
-    tmp_a = a_fp32 + mm * K;
-
-    tmp_d = d_fp32 + mm * N;
-
-    svld1_vnum_15(ain, tmp_d);
-
-    for(kk = 0; kk < K; kk++) {
-      float scala_a = tmp_a[kk];
-      tmp_b = b_fp32 + kk * N;
-
-      svld1_vnum_15(bin, tmp_b);
-      svmla_z_15(ain, ain, bin, scala_a)
-    }
-
-    svst1_vnum_15(tmp_d, ain);
-  }
-}
-
 inline void matmul_1x240_240x2048(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
 
   svbool_t ptrue = svptrue_b32();
 
-  init_vec_16(ain);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
-  float *tmp_a, *tmp_b, *tmp_d;
-  tmp_d = d_fp32;
-  
-  int kk = 0;
+  if(M == 1) {
+    init_vec_16(ain);
+    init_vec_16(bin);
+    init_vec_16(cin);
+    init_vec_16(din);
+    float *tmp_a, *tmp_b, *tmp_d;
+    tmp_d = d_fp32;
     
-  for(int mm = 0; mm < M; mm++) {
-
-    tmp_a = a_fp32 + mm * K;
-
+    int kk = 0;
+      
+    tmp_a = a_fp32;
     for(int ll = 0; ll < 8; ll++) {
-
-      tmp_d = d_fp32 + mm * N + ll * N / 8;
+      tmp_d = d_fp32 + ll * N / 8;
 
       svld1_vnum_16(ain, tmp_d);
-
       for(kk = 0; kk < K; kk++) {
         float scala_a = tmp_a[kk];
         tmp_b = b_fp32 + kk * N + ll * N / 8;
-
         svld1_vnum_16(bin, tmp_b);
         svmla_z_16(ain, ain, bin, scala_a)
       }
-
       svst1_vnum_16(tmp_d, ain);
     }    
   }
-}
-
-inline void matmul_2x240_240x2048(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_b, *tmp_d_0, *tmp_d_1;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
-    
-  for(int ll = 0; ll < 16; ll++) {
-    tmp_a_0 = a_fp32 + 0 * K;
-    tmp_a_1 = a_fp32 + 1 * K;
-
-    tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
-    tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
-
-    svld1_vnum_8(ain_0, tmp_d_0);
-    svld1_vnum_8(ain_1, tmp_d_1);
-
-    for(kk = 0; kk < K; kk++) {
-      float scala_a_0 = tmp_a_0[kk];
-      float scala_a_1 = tmp_a_1[kk];
-      tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-      svld1_vnum_8(bin, tmp_b);
-      svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-      svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-    }
-
-    svst1_vnum_8(tmp_d_0, ain_0);
-    svst1_vnum_8(tmp_d_1, ain_1);
-  }
-}
-
-inline void matmul_3x240_240x2048(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(ain_2);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_a_2, *tmp_b;
-  float *tmp_d_0, *tmp_d_1, *tmp_d_2;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
-    
-  for(int ll = 0; ll < 16; ll++) {
-    tmp_a_0 = a_fp32 + 0 * K;
-    tmp_a_1 = a_fp32 + 1 * K;
-    tmp_a_2 = a_fp32 + 2 * K;
-
-    tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
-    tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
-    tmp_d_2 = d_fp32 + 2 * N + ll * N / 16;
-
-    svld1_vnum_8(ain_0, tmp_d_0);
-    svld1_vnum_8(ain_1, tmp_d_1);
-    svld1_vnum_8(ain_2, tmp_d_2);
-
-    for(kk = 0; kk < K; kk++) {
-      float scala_a_0 = tmp_a_0[kk];
-      float scala_a_1 = tmp_a_1[kk];
-      float scala_a_2 = tmp_a_2[kk];
-      tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-      svld1_vnum_8(bin, tmp_b);
-      svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-      svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-      svmla_z_8(ain_2, ain_2, bin, scala_a_2)
-    }
-
-    svst1_vnum_8(tmp_d_0, ain_0);
-    svst1_vnum_8(tmp_d_1, ain_1);
-    svst1_vnum_8(tmp_d_2, ain_2);
-  }
-}
-
-inline void matmul_1x240_240x2048_normal(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
-
-  svbool_t ptrue = svptrue_b32();
-
-  init_vec_16(ain_0);
-  init_vec_16(ain_1);
-  init_vec_16(bin);
-
-  float *tmp_a_0, *tmp_a_1, *tmp_b, *tmp_d_0, *tmp_d_1;
-  // 2048 = 8 x 8 x 8 x 8 x 4    
-  int kk = 0;
+  else if(M == 2) {
+    init_vec_16(ain_0);
+    init_vec_16(ain_1);
+    init_vec_16(bin);
   
-  for(int m = 0; m < M; m+=2) {
-    if(m != M - 1) {
-      tmp_a_0 = a_fp32 + (m+0) * K;
-      tmp_a_1 = a_fp32 + (m+1) * K;
-      for(int ll = 0; ll < 16; ll++) {
-
-        tmp_d_0 = d_fp32 + (m+0) * N + ll * N / 16;
-        tmp_d_1 = d_fp32 + (m+1) * N + ll * N / 16;
-
-        svld1_vnum_8(ain_0, tmp_d_0);
-        svld1_vnum_8(ain_1, tmp_d_1);
-
-        for(kk = 0; kk < K; kk++) {
-          float scala_a_0 = tmp_a_0[kk];
-          float scala_a_1 = tmp_a_1[kk];
-          tmp_b = b_fp32 + kk * N + ll * N / 16;
-
-          svld1_vnum_8(bin, tmp_b);
-          svmla_z_8(ain_0, ain_0, bin, scala_a_0)
-          svmla_z_8(ain_1, ain_1, bin, scala_a_1)
-        }
-
-        svst1_vnum_8(tmp_d_0, ain_0);
-        svst1_vnum_8(tmp_d_1, ain_1);
+    float *tmp_a_0, *tmp_a_1, *tmp_b, *tmp_d_0, *tmp_d_1;
+    // 2048 = 8 x 8 x 8 x 8 x 4    
+    int kk = 0;
+      
+    for(int ll = 0; ll < 16; ll++) {
+      tmp_a_0 = a_fp32 + 0 * K;
+      tmp_a_1 = a_fp32 + 1 * K;
+  
+      tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
+      tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
+  
+      svld1_vnum_8(ain_0, tmp_d_0);
+      svld1_vnum_8(ain_1, tmp_d_1);
+  
+      for(kk = 0; kk < K; kk++) {
+        float scala_a_0 = tmp_a_0[kk];
+        float scala_a_1 = tmp_a_1[kk];
+        tmp_b = b_fp32 + kk * N + ll * N / 16;
+  
+        svld1_vnum_8(bin, tmp_b);
+        svmla_z_8(ain_0, ain_0, bin, scala_a_0)
+        svmla_z_8(ain_1, ain_1, bin, scala_a_1)
       }
-    } else {
-      tmp_a_0 = a_fp32 + m * K;
-
-      for(int ll = 0; ll < 8; ll++) {
-
-        tmp_d_0 = d_fp32 + m * N + ll * N / 8;
-
-        svld1_vnum_16(ain_0, tmp_d_0);
-
-        for(kk = 0; kk < K; kk++) {
-          float scala_a = tmp_a_0[kk];
-          tmp_b = b_fp32 + kk * N + ll * N / 8;
-
-          svld1_vnum_16(bin, tmp_b);
-          svmla_z_16(ain_0, ain_0, bin, scala_a);
-        }
-
-        svst1_vnum_16(tmp_d_0, ain_0);
+  
+      svst1_vnum_8(tmp_d_0, ain_0);
+      svst1_vnum_8(tmp_d_1, ain_1);
+    }
+  } 
+  if(M == 3) {
+    init_vec_16(ain_0);
+    init_vec_16(ain_1);
+    init_vec_16(ain_2);
+    init_vec_16(bin);
+  
+    float *tmp_a_0, *tmp_a_1, *tmp_a_2, *tmp_b;
+    float *tmp_d_0, *tmp_d_1, *tmp_d_2;
+    // 2048 = 8 x 8 x 8 x 8 x 4    
+    int kk = 0;
+      
+    for(int ll = 0; ll < 16; ll++) {
+      tmp_a_0 = a_fp32 + 0 * K;
+      tmp_a_1 = a_fp32 + 1 * K;
+      tmp_a_2 = a_fp32 + 2 * K;
+  
+      tmp_d_0 = d_fp32 + 0 * N + ll * N / 16;
+      tmp_d_1 = d_fp32 + 1 * N + ll * N / 16;
+      tmp_d_2 = d_fp32 + 2 * N + ll * N / 16;
+  
+      svld1_vnum_8(ain_0, tmp_d_0);
+      svld1_vnum_8(ain_1, tmp_d_1);
+      svld1_vnum_8(ain_2, tmp_d_2);
+  
+      for(kk = 0; kk < K; kk++) {
+        float scala_a_0 = tmp_a_0[kk];
+        float scala_a_1 = tmp_a_1[kk];
+        float scala_a_2 = tmp_a_2[kk];
+        tmp_b = b_fp32 + kk * N + ll * N / 16;
+  
+        svld1_vnum_8(bin, tmp_b);
+        svmla_z_8(ain_0, ain_0, bin, scala_a_0)
+        svmla_z_8(ain_1, ain_1, bin, scala_a_1)
+        svmla_z_8(ain_2, ain_2, bin, scala_a_2)
       }
+  
+      svst1_vnum_8(tmp_d_0, ain_0);
+      svst1_vnum_8(tmp_d_1, ain_1);
+      svst1_vnum_8(tmp_d_2, ain_2);
     }
   }
 }
 
 
-inline void matmul_1x2048_2048x240(const int M, const int N, const int K,
+inline void matmul_1x240_240x128(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
-
   svbool_t ptrue = svptrue_b32();
 
-  init_vec_16(ain);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
 
-  float *tmp_a, *tmp_b, *tmp_d;
-      
-  for(int mm = 0; mm < M; mm++) {
-    tmp_d = d_fp32 + mm * N;
+  float* _bptr = b_fp32;
 
-    svld1_vnum_15(ain, tmp_d);
+  if(M == 1) {
+    init_vec_8(bin);
+    init_vec_8(din);
+    svld1_vnum_8(din, d_fp32);
 
-    tmp_a = a_fp32 + mm * K;
-    for(int kk = 0; kk < K; kk++) {
+    for(int k = 0; k < K; k++) {
+      float _a = a_fp32[k];
+      svld1_vnum_8(bin, _bptr);
 
-      float scala_a = tmp_a[kk];
-      tmp_b = b_fp32 + kk * N;
-
-      svld1_vnum_15(bin, tmp_b);
-      svmla_z_15(ain, ain, bin, scala_a)
+      svmla_z_8(din, din, bin,  _a);
+      _bptr += N;
     }
-    svst1_vnum_15(tmp_d, ain);
+    svst1_vnum_8(d_fp32, din);
+  }
+  else if(M == 2) {
+    init_vec_8(bin);
+    init_vec_8(din0); init_vec_8(din1);
+    svld1_vnum_8(din0, d_fp32); svld1_vnum_8(din1, d_fp32+N);
+
+    for(int k = 0; k < K; k++) {
+      float _a0 = a_fp32[k]; float _a1 = a_fp32[k+K];
+      svld1_vnum_8(bin, _bptr); 
+
+      svmla_z_8(din0, din0, bin,  _a0); svmla_z_8(din1, din1, bin,  _a1);
+      _bptr += N;
+    }
+    svst1_vnum_8(d_fp32, din0); svst1_vnum_8(d_fp32+N, din1);
+  }
+  else if(M == 3) {
+    init_vec_8(bin);
+    init_vec_8(din0);  init_vec_8(din1); init_vec_8(din2);
+    svld1_vnum_8(din0, d_fp32); svld1_vnum_8(din1, d_fp32+N); svld1_vnum_8(din2, d_fp32+2*N);
+
+    for(int k = 0; k < K; k++) {
+      float _a0 = a_fp32[k]; float _a1 = a_fp32[k+K]; float _a2 = a_fp32[k+K*2];
+      svld1_vnum_8(bin, _bptr); 
+
+      svmla_z_8(din0, din0, bin,  _a0); svmla_z_8(din1, din1, bin,  _a1); svmla_z_8(din2, din2, bin,  _a2);
+      _bptr += N;
+    }
+    svst1_vnum_8(d_fp32, din0); svst1_vnum_8(d_fp32+N, din1); svst1_vnum_8(d_fp32+N*2, din2);
   }
 }
 
-inline void matmul_2x2048_2048x240(const int M, const int N, const int K,
+inline void matmul_1x128_128x240(const int M, const int N, const int K,
   float *a_fp32, float* b_fp32, float *d_fp32) {
-
   svbool_t ptrue = svptrue_b32();
 
-  init_vec_16(ain0);
-  init_vec_16(ain1);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
+  float* _bptr = b_fp32;
 
-  float *tmp_a0,*tmp_a1, *tmp_b, *tmp_d0, *tmp_d1;
-      
-  // for(int mm = 0; mm < M; mm++) {
-  tmp_d0 = d_fp32 + 0 * N;
-  tmp_d1 = d_fp32 + 1 * N;
+  if(M == 1) {
+    init_vec_15(bin);
+    init_vec_15(din);
+    svld1_vnum_15(din, d_fp32);
 
-  svld1_vnum_15(ain0, tmp_d0);
-  svld1_vnum_15(ain1, tmp_d1);
+    for(int k = 0; k < K; k++) {
+      float _a = a_fp32[k];
+      svld1_vnum_15(bin, _bptr);
 
-  tmp_a0 = a_fp32 + 0 * K;
-  tmp_a1 = a_fp32 + 1 * K;
-  for(int kk = 0; kk < K; kk++) {
-    float scala_a0 = tmp_a0[kk];
-    float scala_a1 = tmp_a1[kk];
-    tmp_b = b_fp32 + kk * N;
-
-    svld1_vnum_15(bin, tmp_b);
-    svmla_z_15(ain0, ain0, bin, scala_a0)
-    svmla_z_15(ain1, ain1, bin, scala_a1)
+      svmla_z_15(din, din, bin,  _a);
+      _bptr += N;
+    }
+    svst1_vnum_15(d_fp32, din);
   }
-  svst1_vnum_15(tmp_d0, ain0);
-  svst1_vnum_15(tmp_d1, ain1);
-  // }
-}
-inline void matmul_3x2048_2048x240(const int M, const int N, const int K,
-  float *a_fp32, float* b_fp32, float *d_fp32) {
+  else if(M == 2) {
+    init_vec_15(bin);
+    init_vec_15(din0); init_vec_15(din1);
+    svld1_vnum_15(din0, d_fp32); svld1_vnum_15(din1, d_fp32+N);
 
-  svbool_t ptrue = svptrue_b32();
+    for(int k = 0; k < K; k++) {
+      float _a0 = a_fp32[k]; float _a1 = a_fp32[k+K];
+      svld1_vnum_15(bin, _bptr); 
 
-  init_vec_16(ain0);
-  init_vec_16(ain1);
-  init_vec_16(ain2);
-  init_vec_16(bin);
-  init_vec_16(cin);
-  init_vec_16(din);
-
-  float *tmp_a0,*tmp_a1,*tmp_a2, *tmp_b, *tmp_d0, *tmp_d1,*tmp_d2;
-      
-  // for(int mm = 0; mm < M; mm++) {
-  tmp_d0 = d_fp32 + 0 * N;
-  tmp_d1 = d_fp32 + 1 * N;
-  tmp_d2 = d_fp32 + 2 * N;
-
-  svld1_vnum_15(ain0, tmp_d0);
-  svld1_vnum_15(ain1, tmp_d1);
-  svld1_vnum_15(ain2, tmp_d2);
-
-  tmp_a0 = a_fp32 + 0 * K;
-  tmp_a1 = a_fp32 + 1 * K;
-  tmp_a2 = a_fp32 + 2 * K;
-  for(int kk = 0; kk < K; kk++) {
-
-    float scala_a0 = tmp_a0[kk];
-    float scala_a1 = tmp_a1[kk];
-    float scala_a2 = tmp_a2[kk];
-    tmp_b = b_fp32 + kk * N;
-
-    svld1_vnum_15(bin, tmp_b);
-    svmla_z_15(ain0, ain0, bin, scala_a0)
-    svmla_z_15(ain1, ain1, bin, scala_a1)
-    svmla_z_15(ain2, ain2, bin, scala_a2)
+      svmla_z_15(din0, din0, bin,  _a0); svmla_z_15(din1, din1, bin,  _a1);
+      _bptr += N;
+    }
+    svst1_vnum_15(d_fp32, din0); svst1_vnum_15(d_fp32+N, din1);
   }
-  svst1_vnum_15(tmp_d0, ain0);
-  svst1_vnum_15(tmp_d1, ain1);
-  svst1_vnum_15(tmp_d2, ain2);
-  // }
+  else if(M == 3) {
+    init_vec_15(bin);
+    init_vec_15(din0);  init_vec_15(din1); init_vec_15(din2);
+    svld1_vnum_15(din0, d_fp32); svld1_vnum_15(din1, d_fp32+N); svld1_vnum_15(din2, d_fp32+2*N);
+
+    for(int k = 0; k < K; k++) {
+      float _a0 = a_fp32[k]; float _a1 = a_fp32[k+K]; float _a2 = a_fp32[k+K*2];
+      svld1_vnum_15(bin, _bptr); 
+
+      svmla_z_15(din0, din0, bin,  _a0); svmla_z_15(din1, din1, bin,  _a1); svmla_z_15(din2, din2, bin,  _a2);
+      _bptr += N;
+    }
+    svst1_vnum_15(d_fp32, din0); svst1_vnum_15(d_fp32+N, din1); svst1_vnum_15(d_fp32+N*2, din2);
+  }
 }
 
 inline void matmul_4x128_128x16(const int M, const int N, const int K,
@@ -744,6 +627,38 @@ inline void matmul_128x4_4x16_tn(const int M, const int N, const int K,
 
     tmp_d = d_fp32 + mm * N;
     svst1_vnum_8(tmp_d, ain);
+  }
+}
+
+inline void matmul_1x128_128x3_nn(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+
+  d_fp32[0] = d_fp32[1] = d_fp32[2] = 0.;
+
+  for(int k = 0; k < 128; k++) {
+    d_fp32[0] += a_fp32[k] * b_fp32[k*3+0];
+    d_fp32[1] += a_fp32[k] * b_fp32[k*3+1];
+    d_fp32[2] += a_fp32[k] * b_fp32[k*3+2];
+  }
+}
+
+inline void matmul_1x3_3x128_nt(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+
+  for(int i = 0; i < 128; i++) {
+    d_fp32[i] = a_fp32[0] * b_fp32[i*3+0] +
+                  a_fp32[1] * b_fp32[i*3+1] +
+                  a_fp32[2] * b_fp32[i*3+2];
+  }
+}
+
+inline void matmul_128x1_1x3_tn(const int M, const int N, const int K,
+  float *a_fp32, float* b_fp32, float *d_fp32) {
+
+  for(int i = 0; i < 128; i++) {
+    d_fp32[i*3+0] = a_fp32[i] * b_fp32[0];
+    d_fp32[i*3+1] = a_fp32[i] * b_fp32[1];
+    d_fp32[i*3+2] = a_fp32[i] * b_fp32[2];
   }
 }
 
@@ -830,28 +745,6 @@ inline void matmul_4x16_16x128_nt(const int M, const int N, const int K,
 
 inline void matmul_4x128_128x16_nn(const int M, const int N, const int K,
   float *A, float* B, float *C) {
-
-    // for(int kk = 0; kk < K; kk++) {
-    //   for(int mm = 0; mm < M; mm++) {
-    //     C[mm*16+ 0] += A[mm*K+kk] * B[kk*N + 0];
-    //     C[mm*16+ 1] += A[mm*K+kk] * B[kk*N + 1];
-    //     C[mm*16+ 2] += A[mm*K+kk] * B[kk*N + 2];
-    //     C[mm*16+ 3] += A[mm*K+kk] * B[kk*N + 3];
-    //     C[mm*16+ 4] += A[mm*K+kk] * B[kk*N + 4];
-    //     C[mm*16+ 5] += A[mm*K+kk] * B[kk*N + 5];
-    //     C[mm*16+ 6] += A[mm*K+kk] * B[kk*N + 6];
-    //     C[mm*16+ 7] += A[mm*K+kk] * B[kk*N + 7];
-    //     C[mm*16+ 8] += A[mm*K+kk] * B[kk*N + 8];
-    //     C[mm*16+ 9] += A[mm*K+kk] * B[kk*N + 9];
-    //     C[mm*16+ 10] += A[mm*K+kk] * B[kk*N + 10];
-    //     C[mm*16+ 11] += A[mm*K+kk] * B[kk*N + 11];
-    //     C[mm*16+ 12] += A[mm*K+kk] * B[kk*N + 12];
-    //     C[mm*16+ 13] += A[mm*K+kk] * B[kk*N + 13];
-    //     C[mm*16+ 14] += A[mm*K+kk] * B[kk*N + 14];
-    //     C[mm*16+ 15] += A[mm*K+kk] * B[kk*N + 15];
-    //   }
-    // }
-
     svbool_t ptrue = svptrue_b32();
 
     svfloat32_t bin_0, cin_0;

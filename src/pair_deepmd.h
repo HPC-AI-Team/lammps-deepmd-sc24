@@ -75,6 +75,15 @@ public:
 
   int numb_types;
   int dipole_flag; 
+  double* dipole_recd;
+
+  std::vector<int > dpl_type;
+  std::vector<int > bond_type;
+  std::vector<int > dipole_sel_type;
+  std::vector<std::pair<int,int>> bd_pairs;
+  int nbd_pairs;
+  int* bd_idx;
+  void init_valid_pairs();
 
 private:  
   int first_time[T_THREAD] = {0};
@@ -88,6 +97,7 @@ private:
   int**  thread_local_ilist;
   int**  thread_local_numneigh;
   int*** thread_firstneigh;
+  double** thread_dipole_recd;
   int**  forward_index_map;
 
 

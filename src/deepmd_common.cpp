@@ -48,45 +48,37 @@ void matmul(const int m, const int n, const int k,
     memset(D, 0, m * n * sizeof(float));
   }
 
-  // #ifdef OPT_CBLAS
-  if(k == 240 && n == 240 && m == 1) {
-    matmul_1x240_240x240(m, n, k, A, B, D);
+  if(k == 240 && n == 240 && m <= 3) {
+    matmul_1x128_128x240(m, n, k, A, B, D);
   } 
-  else if(k == 240 && n == 2048 && m == 1) {
+  else if(k == 240 && n == 2048 && m <= 3) {
     matmul_1x240_240x2048(m, n, k, A, B, D);
   } 
-  // else if(k == 240 && n == 2048 && m == 2) {
-  //   matmul_2x240_240x2048(m, n, k, A, B, D);
-  // } 
-  // else if(k == 240 && n == 2048 && m == 3) {
-  //   matmul_3x240_240x2048(m, n, k, A, B, D);
-  // }
-  // else if(k == 2048 && n == 240 && m == 1) {
-  //   matmul_1x2048_2048x240(m, n, k, A, B, D);
-  // }
-  // else if(k == 2048 && n == 240 && m == 2) {
-  //   matmul_2x2048_2048x240(m, n, k, A, B, D);
-  // }
-  // else if(k == 2048 && n == 240 && m == 3) {
-  //   matmul_3x2048_2048x240(m, n, k, A, B, D);
-  // }
-  // else if(k == 240 && n == 1 && m <= 3) {
-  //   matmul_1x240_240x1(m, n, k, A, B, D);
-  // }
-  else {
-      cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-        m,n,k,
-        alpha,A,k,
-        B,n,
-        beta,D,n);
+  else if(k == 2048 && n == 240 && m <= 3) {
+    matmul_1x128_128x240(m, n, k, A, B, D);
   }
-  // #else 
-  //   cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans,
-  //       m,n,k,
-  //       alpha,A,k,
-  //       B,n,
-  //       beta,D,n);
-  // #endif
+  else if(k == 240 && n == 1 && m <= 3) {
+    matmul_1x240_240x1(m, n, k, A, B, D);
+  }
+  else if(k == 128 && n == 240 && m <= 3) {
+    matmul_1x128_128x240(m, n, k, A, B, D);
+  }
+  else if(k == 240 && n == 128 && m <= 3) {
+    matmul_1x240_240x128(m, n, k, A, B, D);
+  }
+  else if(k == 1 && n == 240 && m == 1) {
+    cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans, m,n,k, alpha,A,k, B,n, beta,D,n);
+  }
+  else {
+    if (getenv("TEST_GEMM_SHAPE") != nullptr && atoi(getenv("TEST_GEMM_SHAPE")) == 1){
+      std::string mesg = fmt::format("m {} n {} k {} \n", m, n, k);
+      printf(mesg.c_str()); fflush(stdout);
+      assert(1 == 0);
+    }
+
+
+    cblas_sgemm(CblasRowMajor,CblasNoTrans,CblasNoTrans, m,n,k, alpha,A,k, B,n, beta,D,n);
+  }
 }
 
 
@@ -191,39 +183,39 @@ void matmul_3d(const int t, const int m, const int n, const int k,
               A+ii*m*k, B+ii*k*n, C+ii*m*n);
     }
   }
+  else if(m == 1 && k == 128 && n == 3 && _transpose_a == false && _transpose_b == false) {
+    for(int ii = 0; ii < t; ii++) {
+      matmul_1x128_128x3_nn(m, n, k, 
+              A+ii*m*k, B+ii*k*n, C+ii*m*n);
+    }
+  }
+  else if(m == 1 && k == 3 && n == 128 && _transpose_a == false && _transpose_b == true) {
+    for(int ii = 0; ii < t; ii++) {
+      matmul_1x3_3x128_nt(m, n, k, 
+              A+ii*m*k, B+ii*k*n, C+ii*m*n);
+    }
+  }
+  else if(m == 128 && k == 1 && n == 3 && _transpose_a == true && _transpose_b == false) {
+    for(int ii = 0; ii < t; ii++) {
+      matmul_128x1_1x3_tn(m, n, k, 
+              A+ii*m*k, B+ii*k*n, C+ii*m*n);
+    }
+  }
   else {
-    // if(t > 3 || _transpose_a == true || _transpose_a == true){
-      for(int ii = 0; ii < t; ii++) {
+    if (getenv("TEST_GEMM_SHAPE") != nullptr && atoi(getenv("TEST_GEMM_SHAPE")) == 1){
+      std::string mesg = fmt::format("m {} n {} k {} \n", m, n, k);
+      printf(mesg.c_str()); fflush(stdout);
+      assert(1 == 0);
+    }
+
+    for(int ii = 0; ii < t; ii++) {
         cblas_sgemm(CblasRowMajor,transpose_a,transpose_b,
           m,n,k,
           alpha,A+ii*m*k,lda,
           B+ii*k*n,ldb,
           beta,C+ii*m*n,ldc);
       }
-    // }
-    // else{
-    //   for(int ii = 0; ii < t; ii++) {
-    //     float *A_t = A+ii*m*k, *B_t=B+ii*k*n, *C_t=C+ii*m*n;
-    //     for (int mm = 0; mm < m; ++mm) {
-    //       for (int nn = 0; nn < n; ++nn) {
-    //         for (int kk = 0; kk < k; ++kk) {
-    //             C_t[mm*n+nn] += A_t[mm*k+kk] * B_t[kk*n+nn];
-    //         }
-    //       }
-    //     }
-    //   }
-    // }
   } 
-  // #else
-  //   for(int ii = 0; ii < t; ii++) {
-  //     cblas_sgemm(CblasRowMajor,transpose_a,transpose_b,
-  //       m,n,k,
-  //       alpha,A+ii*m*k,lda,
-  //       B+ii*k*n,ldb,
-  //       beta,C+ii*m*n,ldc);
-  //   }
-
-  // #endif
   
   
 }
