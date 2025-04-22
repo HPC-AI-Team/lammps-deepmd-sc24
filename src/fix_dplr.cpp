@@ -279,6 +279,8 @@ void FixDPLR::pre_force(int vflag)
 
 void FixDPLR::post_force(int vflag)
 {
+
+  self_timer->stamp();
   if(DEBUG_MSG) utils::logmesg(lmp, "\n\n*************** post_force ntimestep {} *****************\n", update->ntimestep);
 
   if (vflag) {
@@ -313,11 +315,12 @@ void FixDPLR::post_force(int vflag)
     // #pragma omp barrier
 
     // memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
+    deep_pots_dipole[tid]->compute_dipole_R_grad();
 
     deep_pots_dipole[tid]->shuffer_dextf(bd_idx, fele);
     double *parallel_dforce = pppm_dplr->f_lr[0] + tid * nall * 3;
     memset(parallel_dforce, 0, sizeof(double) * nall * 3);
-    deep_pots_dipole[tid]->compute_dipole(parallel_dforce, thread_dvirial[tid]);
+    deep_pots_dipole[tid]->compute_force(parallel_dforce, thread_dvirial[tid]);
 
     pair_deepmd->force_reduce(&(pppm_dplr->f_lr[0][0]), nall, comm->nthreads, 3, tid, 1.);
 
@@ -400,6 +403,8 @@ void FixDPLR::post_force(int vflag)
   if(DEBUG_MSG) utils::logmesg_arry(lmp,fmt::format("[info] post_force fix  virial finial \n"),virial, 6, 1);
 
   if(DEBUG_MSG) utils::logmesg(lmp, "\n********************************\n");
+
+  self_timer->stamp(Timer::DP_TIME);
 }
 
 

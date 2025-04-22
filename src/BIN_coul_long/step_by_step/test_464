@@ -1,0 +1,67 @@
+#!/bin/sh -x
+#PJM -L  "freq=2200"
+#PJM -L  "node=4x6x4"
+#PJM --mpi "shape=4x6x4"
+#PJM -L  "rscgrp=small-s1,eco_state=2"
+#PJM -L  "elapse=00:02:00"
+#PJM --mpi "max-proc-per-node=4"
+#PJM -g hp230257
+#PJM -s
+#
+
+# 8x12x8=768
+# 12x15x12=2160
+# 16x18x16=5184
+# 16x24x16=6144
+# 24x32x24=18432
+# 32x36x32=36864
+# 36x36x36=46656
+
+export FLIB_FASTOMP=TRUE
+export OMP_NUM_THREADS=12
+
+export LD_LIBRARY_PATH=/home/u12219/data/zhangxiangyu/DG/libs/heffte/lib:$LD_LIBRARY_PATH
+# export LD_LIBRARY_PATH=/home/u12219/data/guozhuoqiang/DG/DGTEST/software/fftw/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/home/u12219/scratch/lijianxiong/DeePMD_ref/dependents/fftw-3.3.10/lib:$LD_LIBRARY_PATH
+
+export tensorflow_root=/vol0001/hp230257/lijianxiong/DeePMD_ref/dependents/TensorFlow-2.2.0
+export CPATH=$tensorflow_root/include:$CPATH
+export LD_LIBRARY_PATH=$tensorflow_root/lib:$LD_LIBRARY_PATH
+
+export OPENBLAS_NUM_THREADS=1
+
+export COMM_OMP_FLAG=0
+export COMM_BORDER_ONE_FLAG=1
+export COMM_PIGGY_FLAG=1
+export THREAD_POOL_FLAG=1
+
+export COMM_DEBUG_FLAG=0
+export COMM_DEBUG_DP_FLAG=0
+
+export TEST_FP16=0
+
+# export TEST_FP16=1
+
+# module sw lang/tcsds-1.2.38
+
+
+export TEST_GEMM_SHAPE=1
+
+export FFT_TYPE_FLAG=0
+mpiexec  ./lmp_execute_double  -in ./in.water_dplr_464_32                          # Execute a.out
+sleep 1
+mpiexec  ./lmp_execute_double  -in ./in.water_dplr_464_32                          # Execute a.out
+sleep 1
+
+export FFT_TYPE_FLAG=0
+mpiexec  ./lmp_execute_float  -in ./in.water_dplr_464_32                          # Execute a.out
+sleep 1
+mpiexec  ./lmp_execute_float  -in ./in.water_dplr_464_32                          # Execute a.out
+sleep 1
+
+
+export FFT_TYPE_FLAG=2
+mpiexec  ./lmp_execute_float  -in ./in.water_dplr_464                          # Execute a.out
+sleep 1
+mpiexec  ./lmp_execute_float  -in ./in.water_dplr_464                          # Execute a.out
+sleep 1

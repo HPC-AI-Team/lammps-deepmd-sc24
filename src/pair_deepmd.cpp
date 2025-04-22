@@ -283,14 +283,37 @@ void PairDeepMD::compute(int eflag, int vflag) {
         #pragma omp barrier
       }
 
+      if(tid == 0) {self_timer->stamp();}
 
       {
         memset(thread_dipole_recd[tid], 0, sizeof(double) * nlocal * 3);
         deep_pots_dipole[tid]->splite_atom();
-        deep_pots_dipole[tid]->compute_dipole_R_grad(thread_dipole_recd[tid]);
+        deep_pots_dipole[tid]->compute_dipole(thread_dipole_recd[tid]);
         
         if(DEBUG_MSG) utils::logmesg(Pair::lmp, "[INFO] finish deep_pots_dipole prepare tid {} \n", tid);
       }
+
+      #pragma omp barrier
+      if(tid == 0) {
+        if(neighbor->ago == 0) {
+          init_valid_pairs();
+        }
+
+        memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
+
+        for(int ii = 0; ii < comm->nthreads; ii++) {
+          for(int jj = 0; jj < 3 * nlocal; jj++) 
+            dipole_recd[jj] += thread_dipole_recd[ii][jj];
+        }
+
+        for (int ii = 0; ii < nbd_pairs; ++ii) {
+          for (int dd = 0; dd < 3; ++dd){
+            atom->x[bd_pairs[ii].second][dd] = atom->x[bd_pairs[ii].first][dd] + dipole_recd[bd_pairs[ii].first * 3 + dd];
+          }
+        }
+      }
+
+      if(tid == 0) {self_timer->stamp(Timer::DW_FWD);}
       
       // create_dcoord(nall, tid);
       // #pragma omp parallel  
@@ -317,22 +340,7 @@ void PairDeepMD::compute(int eflag, int vflag) {
         
         // // accumulate energy and virial
 
-        if(neighbor->ago == 0) {
-          init_valid_pairs();
-        }
-
-        memset(dipole_recd, 0, sizeof(double) * nlocal * 3);
-
-        for(int ii = 0; ii < comm->nthreads; ii++) {
-          for(int jj = 0; jj < 3 * nlocal; jj++) 
-            dipole_recd[jj] += thread_dipole_recd[ii][jj];
-        }
-
-        for (int ii = 0; ii < nbd_pairs; ++ii) {
-          for (int dd = 0; dd < 3; ++dd){
-            atom->x[bd_pairs[ii].second][dd] = atom->x[bd_pairs[ii].first][dd] + dipole_recd[bd_pairs[ii].first * 3 + dd];
-          }
-        }
+        
 
 
         if (eflag) {
@@ -371,6 +379,9 @@ void PairDeepMD::compute(int eflag, int vflag) {
         // memset(atom->v[0], 0, nlocal * sizeof(double) * 3);
         // memset(dvirial, 0, sizeof(double) * 9);
       }
+
+      if(tid == 0) {self_timer->stamp(Timer::DP_TIME);}
+
 
       // for(int tid = 0; tid < nthreads; tid++){
       //   print_v(6, fmt::format("virial type_: "), virial);

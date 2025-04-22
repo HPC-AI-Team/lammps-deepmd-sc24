@@ -170,14 +170,15 @@ void Verlet::setup(int flag)
   modify->setup_pre_reverse(eflag,vflag);
   if (force->newton) comm->reverse_comm();
 
-  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
-
+  
   // utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
-
-
+  
+  
   modify->setup(vflag);
   output->setup(flag);
   update->setupflag = 0;
+  
+  if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after reverse lmp->execute(LAMMPS::PAIR_COMPUTE) \n"), atom->f[0], atom->nlocal * 3, 1);
 
   if(DEBUG_MSG) utils::logmesg_arry_x(lmp,fmt::format("[info] after modify atom->v \n"), atom->v[0], atom->nlocal * 3, 1);
 
@@ -298,6 +299,9 @@ void Verlet::run(int n)
     }
 
     if(DEBUG_MSG) MPI_Barrier(MPI_COMM_WORLD);
+    timer->stamp();
+    MPI_Barrier(MPI_COMM_WORLD);
+    timer->stamp(Timer::COMM);
 
 
     // self_timer->stamp();
@@ -369,15 +373,16 @@ void Verlet::run(int n)
     // accuracy test
     {
 
-      // std::string mesg = "_f = [";
-      // for(int i = 0; i < 384; i++) {
-      //   mesg += fmt::format(" {}, {}, {}", atom->f[i][0], atom->f[i][1], atom->f[i][2]);
-      //   if(i != atom->nlocal - 1) mesg += ", ";
-      // }
-      // mesg += "]\n";
-      // utils::logmesg(lmp,mesg);
+    //   // std::string mesg = "_f = [";
+    //   // for(int i = 0; i < 384; i++) {
+    //   //   mesg += fmt::format(" {}, {}, {}", atom->f[i][0], atom->f[i][1], atom->f[i][2]);
+    //   //   if(i != atom->nlocal - 1) mesg += ", ";
+    //   // }
+    //   // mesg += "]\n";
+    //   // utils::logmesg(lmp,mesg);
   
-      // utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), atom->tag, atom->nlocal, 1);
+    //   // utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), atom->tag, atom->nlocal, 1);
+    //   // utils::logmesg_arry_x(lmp,fmt::format("[info] x \n"), atom->x[0], atom->nlocal * 3, 1);
   
       // double all_f[512*3];
       // std::vector<int> all_tag(512);
@@ -397,24 +402,25 @@ void Verlet::run(int n)
       // for (int i = 1; i < 48; i++) displs[i] = displs[i - 1] + recvcounts[i - 1];
       // MPI_Gatherv(atom->tag, atom->nlocal, MPI_INT, all_tag.data(), recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
       // MPI_Gatherv(atom->type, atom->nlocal, MPI_INT, all_type.data(), recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
-  
-      // std::string mesg = "_f = [";
-      // for(int i = 1; i < 385; i++) {
-      //   for(int j = 0; j < 512; j++) {
-      //     if(all_tag[j] == i) {
-      //       mesg += fmt::format(" {}, {}, {}", all_f[j*3+0], all_f[j*3+1], all_f[j*3+2]);
-      //       if(i != 384) mesg += ", ";
-      //       continue;
+      
+      // if(comm->me == 0) {
+      //   std::string mesg = "_f = [";
+      //   for(int i = 1; i < 385; i++) {
+      //     for(int j = 0; j < 512; j++) {
+      //       if(all_tag[j] == i) {
+      //         mesg += fmt::format(" {}, {}, {}", all_f[j*3+0], all_f[j*3+1], all_f[j*3+2]);
+      //         if(i != 384) mesg += ", ";
+      //         continue;
+      //       }
       //     }
       //   }
+      //   mesg += "]\n";
+      //   utils::logmesg(lmp,mesg);
+    
+      //   utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), all_tag.data(), 512, 1);
+      //   utils::logmesg_arry(lmp,fmt::format("[info ]all_type \n"), all_type.data(), 512, 1);
       // }
-      // mesg += "]\n";
-      // utils::logmesg(lmp,mesg);
-  
-      // utils::logmesg_arry(lmp,fmt::format("[info ]tag \n"), all_tag.data(), 512, 1);
-      // utils::logmesg_arry(lmp,fmt::format("[info ]all_type \n"), all_type.data(), 512, 1);
     }
-
   }
 
   if (n_post_integrate) modify->post_integrate();

@@ -42,7 +42,7 @@ class Atom : protected Pointers {
   bigint natoms;         // total # of atoms in system, could be 0
                          // natoms may not be current if atoms lost
   int nlocal, nghost;    // # of owned and ghost atoms on this proc
-  int nlocal_real, nghost_real;
+  // int nlocal_real, nghost_real;
   int nmax;              // max # of owned+ghost in arrays on this proc
   int tag_enable;        // 0/1 if atom ID tags are defined
   int molecular;         // 0 = atomic, 1 = standard molecular system,

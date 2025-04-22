@@ -301,18 +301,21 @@ public:
 		double*	force,
 		double*	virial);
 
-  void compute_dipole_R_grad (ENERGYTYPE *			dipole_);
+  // void compute_dipole_R_grad (ENERGYTYPE *			dipole_);
+  void compute_dipole (ENERGYTYPE *			dipole_);
+  void compute_dipole_R_grad ();
 
-  void compute_dipole (
-		double*	force,
-		double*	virial);
+  void compute_force (
+    double*	force,
+    double*	virial);
 
   void session_run_ener ();
   void session_run_dipole ();
 
   void prod_env_mat_a();
 
-  void fitting_net_dipole_R_grad(int type_i);
+  void fitting_net_dipole_fwd(int type_i);
+  void fitting_net_dipole_R_grad_bwd(int type_i);
   void fitting_net_dipole_prod_force(int type_i);
   void fitting_net_normal(int type_i);
   void embedding_net(int type_i);

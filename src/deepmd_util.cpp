@@ -314,7 +314,7 @@ void DeepPot::splite_atom() {
   task_division_selet_real(ifrom, ito);
   // task_division(nthreads, global_nlocal, tid, ifrom, ito);
   // ifrom = 0;
-  // if(tid == 0) ito = atom->nlocal;
+  // if(tid == 0) ito = real_index.size();
   // else ito = 0;
 
   // if (DEBUG_DP) utils::logmesg(lmp, "splite_atom tid {} ifrom {} ito {} atom->nlocal_real {} nlocal  {} nghost {} ago {}\n", 
@@ -470,10 +470,10 @@ void DeepPot::splite_atom() {
   if(DEBUG_DP) if(tid == 0) print_v(nall * 1, fmt::format("datype   {} {} :: ", nloc, nall), datype);
   if(DEBUG_DP) if(tid == 0) print_v(nall * 3, fmt::format("dcoord   {} :: ", nall * 3), dcoord);
   // 每种类型原子的邻居数量
-  t_timer->stamp();
+  // t_timer->stamp();
   // prod_env_mat_a();
   prod_atom_nlist();
-  t_timer->stamp(Timer::PROD_ENV);
+  // t_timer->stamp(Timer::PROD_ENV);
 
   // int nall = backward_index_size;
   // int nghost = nall - local_nloc;
@@ -1732,7 +1732,7 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
   // MPI_Finalize();
 }
 
-void DeepPot::compute_dipole_R_grad (ENERGYTYPE *			dipole_) {
+void DeepPot::compute_dipole (ENERGYTYPE* dipole_) {
   // fwd_map，存放 real atom在新的表里的位置
   // bkw_map，存放 所有的 real atom
     // get Descriptor
@@ -1750,10 +1750,9 @@ void DeepPot::compute_dipole_R_grad (ENERGYTYPE *			dipole_) {
   for(int type_i = 0; type_i < sess_ntypes; type_i++) {
     embedding_net(type_i);
   }  
-
   for(int type_i = 0; type_i < sess_ntypes; type_i++) {
-    fitting_net_dipole_R_grad(type_i);
-  }
+    fitting_net_dipole_fwd(type_i);
+  }  
 
   memcpy(ori_dipole, layer_final_qmat, nloc * 3 * sizeof(FPTYPE));
 
@@ -1766,13 +1765,28 @@ void DeepPot::compute_dipole_R_grad (ENERGYTYPE *			dipole_) {
     dipole_[global_index * 3 + 2] = ori_dipole[local_index * 3 + 2];
   }
 
-  if(DEBUG_DP) utils::logmesg(lmp, "[INFO] finish compute_dipole_R_grad tid {} \n");
+  return;
+}
 
+void DeepPot::compute_dipole_R_grad () {
+  // fwd_map，存放 real atom在新的表里的位置
+  // bkw_map，存放 所有的 real atom
+    // get Descriptor
+
+  if (nloc == 0) {
+    return;
+  }
+
+  int sess_ntypes = dipole_sel_type.size();
+
+  for(int type_i = 0; type_i < sess_ntypes; type_i++) {
+    fitting_net_dipole_R_grad_bwd(type_i);
+  }
 
   return;
 }
 
-void DeepPot::compute_dipole (
+void DeepPot::compute_force (
   double*	dforce_,
   double*	dvirial_) {
 
@@ -1825,6 +1839,7 @@ void DeepPot::compute_dipole (
     dforce_[global_index * 3 + 2] = ori_dforce[local_index * 3 + 2];
   }
 }
+
 
 // dforce_为 parallel_force
 void DeepPot::compute_ener (ENERGYTYPE *			dener_,
@@ -2028,7 +2043,7 @@ void DeepPot::embedding_net(int type_i) {
     rg_fusion[type_i][_i] *= 4.0 / ndescrpt;
   }
 
-  t_timer->stamp(Timer::TABULATE);
+  // t_timer->stamp(Timer::TABULATE);
 
   if(DEBUG_DP)  if(tid == 0) print_v(last_layer_size * 4, fmt::format("rg_fusion[type_i] type_i {} ", type_i), rg_fusion[type_i]);
 
@@ -2055,62 +2070,58 @@ void DeepPot::embedding_net(int type_i) {
   memset(descrptor[type_i], 0, sizeof(FPTYPE) * type_natoms[type_i] * last_layer_size * n_axis_neuron);
 
   matmul_3d(type_natoms[type_i], last_layer_size, n_axis_neuron, 4, rg_fusion[type_i], rg_silce[type_i], descrptor[type_i], true, false);
-  t_timer->stamp(Timer::EM_MUT_3D);
+  // t_timer->stamp(Timer::EM_MUT_3D);
 
   if(DEBUG_DP) if(tid == 0) print_v(last_layer_size * n_axis_neuron, fmt::format("descrptor[type_i] type_i {}\n",type_i ), descrptor[type_i]);
   if(DEBUG_DP && (MODEL_TYPE == DIPOLE_TYPE)) if(tid == 0) print_v(last_layer_size * 3, fmt::format("qmat[type_i]          type_i {}\n",type_i ), qmat[type_i]);
 }
 
 
-void DeepPot::fitting_net_dipole_R_grad(int type_i) {
+void DeepPot::fitting_net_dipole_fwd(int type_i) {
   if(type_natoms[type_i] == 0) return;
 
-  t_timer->stamp();
+  // t_timer->stamp();
 
-  #ifndef HIGH_PREC
   if(comm->fp16_flag) {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0, gemm_fp16_buf);
   } else {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   }
-  #else 
-    matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
-  #endif
 
-  t_timer->stamp(Timer::MATMUL_ADD_0);
+  // t_timer->stamp(Timer::MATMUL_ADD_0);
 
   fast_tanh(type_natoms[type_i] * n_neuron[0], layer_0, layer_0_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
 
   // layer_1
   matmul(type_natoms[type_i], n_neuron[1], n_neuron[0],  layer_0_tanh,    c_matrix[1][type_i], c_bias[1][type_i], layer_1);
-  t_timer->stamp(Timer::MATMUL_ADD_1);
+  // t_timer->stamp(Timer::MATMUL_ADD_1);
   // print_v(n_neuron[1], fmt::format("matmul_add layer1 type_i {}: ", type_i), layer_1);
   fast_tanh(type_natoms[type_i] * n_neuron[1], layer_1, layer_1_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
   // print_v(n_neuron[1], fmt::format("fast_tanh layer1 type_i {}: ", type_i), layer_1_tanh);
   idt_mult(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_tanh, layer_1);    
-  t_timer->stamp(Timer::IDT_MULT);
+  // t_timer->stamp(Timer::IDT_MULT);
   // print_v(n_neuron[1], fmt::format("idt_mult layer1 type_i {}: ", type_i), layer_1);
   matrix_add(type_natoms[type_i], n_neuron[1], layer_0_tanh, layer_1);
-  t_timer->stamp(Timer::MATRIX_ADD);
+  // t_timer->stamp(Timer::MATRIX_ADD);
   // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_1);
 
   // layer_2
   matmul(type_natoms[type_i], n_neuron[2], n_neuron[1],  layer_1,    c_matrix[2][type_i], c_bias[2][type_i], layer_2);
-  t_timer->stamp(Timer::MATMUL_ADD_2);
+  // t_timer->stamp(Timer::MATMUL_ADD_2);
   // print_v(n_neuron[1], fmt::format("matmul_add layer2 type_i {}: ", type_i), layer_2);
   fast_tanh(type_natoms[type_i] * n_neuron[2], layer_2, layer_2_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
 
 
   // print_v(n_neuron[1], fmt::format("fast_tanh layer2 type_i {}: ", type_i), layer_2_tanh);
   idt_mult(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_tanh, layer_2);
-  t_timer->stamp(Timer::IDT_MULT);
+  // t_timer->stamp(Timer::IDT_MULT);
   // print_v(n_neuron[1], fmt::format("idt_mult layer2 type_i {}: ", type_i), layer_2);
 
   matrix_add(type_natoms[type_i], n_neuron[1], layer_1, layer_2);
-  t_timer->stamp(Timer::MATRIX_ADD);
+  // t_timer->stamp(Timer::MATRIX_ADD);
   // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_2);
 
   matmul(type_natoms[type_i], last_layer_size,   n_neuron[2],  layer_2,    c_matrix[3][type_i], c_bias[3][type_i], layer_final);
@@ -2120,6 +2131,13 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
   matmul_3d(type_natoms[type_i], 1, 3, last_layer_size, layer_final, qmat[type_i], layer_final_qmat_off, false, false);
 
   if(DEBUG_DP) if(tid == 0) print_v(type_natoms[type_i] * 3, fmt::format("dipole layer_final_qmat_off type_{}: ", type_i), layer_final_qmat_off);
+}
+
+
+void DeepPot::fitting_net_dipole_R_grad_bwd(int type_i) {
+  if(type_natoms[type_i] == 0) return;
+
+  // t_timer->stamp();
 
   for(int dim = 0; dim < 3; dim++) {
 
@@ -2139,53 +2157,49 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
   
     // layer_2_grad
     idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
-    t_timer->stamp(Timer::IDT_MULT_GRAD);
+    // t_timer->stamp();(Timer::IDT_MULT_GRAD);
     // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
     fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
-    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // t_timer->stamp();(Timer::FAST_TANH_GRAD);
     // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
     matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
-    t_timer->stamp(Timer::MATMUL_2D_1);
+    // t_timer->stamp();(Timer::MATMUL_2D_1);
     // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
       
     matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
-    t_timer->stamp(Timer::MATRIX_ADD);
+    // t_timer->stamp();(Timer::MATRIX_ADD);
     // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
     
     // layer_1_grad
     idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
-    t_timer->stamp(Timer::IDT_MULT_GRAD);
+    // t_timer->stamp();(Timer::IDT_MULT_GRAD);
     // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
     fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
-    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // t_timer->stamp();(Timer::FAST_TANH_GRAD);
     // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
     
     matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
-    t_timer->stamp(Timer::MATMUL_2D_2);
+    // t_timer->stamp();(Timer::MATMUL_2D_2);
     // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
     
     matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
-    t_timer->stamp(Timer::MATRIX_ADD);
+    // t_timer->stamp();(Timer::MATRIX_ADD);
     // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
     
     // layer_0_grad
     fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
-    t_timer->stamp(Timer::FAST_TANH_GRAD);
+    // t_timer->stamp();(Timer::FAST_TANH_GRAD);
     // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
     
-    #ifndef HIGH_PREC
     if(comm->fp16_flag){
       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t_fp16[0][type_i], NULL, descrptor_grad, gemm_fp16_buf);
     } else {
       matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
     }
-    #else
-      matmul(type_natoms[type_i], dim_descrpt, n_neuron[0], layer_0_grad, c_matrix_t[0][type_i], NULL, descrptor_grad);
-    #endif
     
     if(DEBUG_DP) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("dipole descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
     
-    t_timer->stamp(Timer::MATMUL_2D_3);
+    // t_timer->stamp();(Timer::MATMUL_2D_3);
     
     memset(rg_fusion_grad, 0, type_natoms[type_i] * last_layer_size * 4);
     memset(rg_slice_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
@@ -2193,7 +2207,7 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
     matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, rg_silce[type_i], descrptor_grad, rg_fusion_grad, false, true);
     matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion[type_i], descrptor_grad, rg_slice_grad, false, false);
     
-    t_timer->stamp(Timer::MATMUL_3D);
+    // t_timer->stamp();(Timer::MATMUL_3D);
     
     if(DEBUG_DP) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("dipole rg_slice_grad type_{}: ", type_i), rg_slice_grad);
     
@@ -2226,7 +2240,7 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
     if(DEBUG_DP) if(tid == 0) print_v(4 * last_layer_size, fmt::format("dipole rg_fusion_grad after / type_{}: ", type_i), rg_fusion_grad);
 
     for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
-      t_timer->stamp();
+      // t_timer->stamp();();
       int t_ptr = type_i * ntypes + type_i_in;
     
       if(comm->tabulate_flag == 5) {
@@ -2243,12 +2257,12 @@ void DeepPot::fitting_net_dipole_R_grad(int type_i) {
           r_matrix_grid_3d[dim][t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
       }
     
-      t_timer->stamp(Timer::TABULATE_GRAD);
+      // t_timer->stamp();(Timer::TABULATE_GRAD);
     
       if(DEBUG_DP) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("dipole s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
       if(DEBUG_DP) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("dipole r_matrix_grid_3d[{}] {} {}:", dim, type_i, type_i_in), r_matrix_grid_3d[dim][t_ptr]);
     
-      t_timer->stamp(Timer::PROD_FV);
+      // t_timer->stamp();(Timer::PROD_FV);
     }
   }
 }
@@ -2280,7 +2294,7 @@ void DeepPot::fitting_net_dipole_prod_force(int type_i) {
 void DeepPot::fitting_net_normal(int type_i) {
   if(type_natoms[type_i] == 0) return;
 
-  t_timer->stamp();
+  // t_timer->stamp();
 
   #ifndef HIGH_PREC
   if(comm->fp16_flag) {
@@ -2292,42 +2306,42 @@ void DeepPot::fitting_net_normal(int type_i) {
     matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  descrptor[type_i], c_matrix[0][type_i], c_bias[0][type_i], layer_0);
   #endif
 
-  t_timer->stamp(Timer::MATMUL_ADD_0);
+  // t_timer->stamp(Timer::MATMUL_ADD_0);
 
   fast_tanh(type_natoms[type_i] * n_neuron[0], layer_0, layer_0_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
 
   // layer_1
   matmul(type_natoms[type_i], n_neuron[1], n_neuron[0],  layer_0_tanh,    c_matrix[1][type_i], c_bias[1][type_i], layer_1);
-  t_timer->stamp(Timer::MATMUL_ADD_1);
+  // t_timer->stamp(Timer::MATMUL_ADD_1);
   // print_v(n_neuron[1], fmt::format("matmul_add layer1 type_i {}: ", type_i), layer_1);
   fast_tanh(type_natoms[type_i] * n_neuron[1], layer_1, layer_1_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
   // print_v(n_neuron[1], fmt::format("fast_tanh layer1 type_i {}: ", type_i), layer_1_tanh);
   idt_mult(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_tanh, layer_1);    
-  t_timer->stamp(Timer::IDT_MULT);
+  // t_timer->stamp(Timer::IDT_MULT);
   // print_v(n_neuron[1], fmt::format("idt_mult layer1 type_i {}: ", type_i), layer_1);
   matrix_add(type_natoms[type_i], n_neuron[1], layer_0_tanh, layer_1);
-  t_timer->stamp(Timer::MATRIX_ADD);
+  // t_timer->stamp(Timer::MATRIX_ADD);
   // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_1);
 
   // layer_2
   matmul(type_natoms[type_i], n_neuron[2], n_neuron[1],  layer_1,    c_matrix[2][type_i], c_bias[2][type_i], layer_2);
-  t_timer->stamp(Timer::MATMUL_ADD_2);
+  // t_timer->stamp(Timer::MATMUL_ADD_2);
   // print_v(n_neuron[1], fmt::format("matmul_add layer2 type_i {}: ", type_i), layer_2);
   fast_tanh(type_natoms[type_i] * n_neuron[2], layer_2, layer_2_tanh);
-  t_timer->stamp(Timer::FAST_TANH);
+  // t_timer->stamp(Timer::FAST_TANH);
 
   if(DEBUG_DP) if(tid == 0) print_v(n_neuron[2], fmt::format("final grad type_i {}: ", type_i), layer_2_grad_reg);
 
   if(update->ntimestep == output->next || update->ntimestep == 0) {
     // print_v(n_neuron[1], fmt::format("fast_tanh layer2 type_i {}: ", type_i), layer_2_tanh);
     idt_mult(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_tanh, layer_2);
-    t_timer->stamp(Timer::IDT_MULT);
+    // t_timer->stamp(Timer::IDT_MULT);
     // print_v(n_neuron[1], fmt::format("idt_mult layer2 type_i {}: ", type_i), layer_2);
 
     matrix_add(type_natoms[type_i], n_neuron[1], layer_1, layer_2);
-    t_timer->stamp(Timer::MATRIX_ADD);
+    // t_timer->stamp(Timer::MATRIX_ADD);
     // print_v(n_neuron[1], fmt::format("matrix_add layer1 type_i {}: ", type_i), layer_2);
 
     // layer_3
@@ -2340,7 +2354,7 @@ void DeepPot::fitting_net_normal(int type_i) {
     for(int ii = 0; ii < type_natoms[type_i]; ii++) {
       dener += layer_final[ii];
     }
-    t_timer->stamp(Timer::MATMUL_ADD_3);
+    // t_timer->stamp(Timer::MATMUL_ADD_3);
   }
 
   // layer_3_grad
@@ -2348,42 +2362,42 @@ void DeepPot::fitting_net_normal(int type_i) {
   for(int ii = 0; ii < type_natoms[type_i]; ii++) {
     memcpy(layer_2_grad_reg + ii * n_neuron[2], grad_f_data[type_i],  n_neuron[2]*sizeof(FPTYPE));
   }
-  t_timer->stamp(Timer::MATMUL_2D_1);
+  // t_timer->stamp(Timer::MATMUL_2D_1);
 
   // layer_2_grad
   idt_mult_grad(type_natoms[type_i], n_neuron[2], c_idt[2][type_i], layer_2_grad_reg, layer_2_grad);
-  t_timer->stamp(Timer::IDT_MULT_GRAD);
+  // t_timer->stamp(Timer::IDT_MULT_GRAD);
   // print_v(n_neuron[2], fmt::format("final idt_mult_grad type_i {}: ", type_i), layer_2_grad);
   fast_tanh_grad(type_natoms[type_i] * n_neuron[2], layer_2_tanh,layer_2_grad, layer_2_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
+  // t_timer->stamp(Timer::FAST_TANH_GRAD);
   // print_v(n_neuron[2], fmt::format("fast_tanh_grad_2 type_i {}: ", type_i), layer_2_grad);
   matmul(type_natoms[type_i], n_neuron[1], n_neuron[2], layer_2_grad, c_matrix_t[2][type_i], NULL, layer_1_grad_reg);
-  t_timer->stamp(Timer::MATMUL_2D_1);
+  // t_timer->stamp(Timer::MATMUL_2D_1);
   // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matmul_2d type_i {}: ", type_i), layer_1_grad_reg);
     
   matrix_add(type_natoms[type_i], n_neuron[1], layer_2_grad_reg, layer_1_grad_reg);
-  t_timer->stamp(Timer::MATRIX_ADD);
+  // t_timer->stamp(Timer::MATRIX_ADD);
   // print_v(n_neuron[2], fmt::format("layer_1_grad_reg matrix_add type_i {}: ", type_i), layer_1_grad);
   
   // layer_1_grad
   idt_mult_grad(type_natoms[type_i], n_neuron[1], c_idt[1][type_i], layer_1_grad_reg, layer_1_grad);
-  t_timer->stamp(Timer::IDT_MULT_GRAD);
+  // t_timer->stamp(Timer::IDT_MULT_GRAD);
   // print_v(n_neuron[2], fmt::format("final idt_mult_grad_1 type_i {}: ", type_i), layer_1_grad);
   fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_1_tanh,layer_1_grad, layer_1_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
+  // t_timer->stamp(Timer::FAST_TANH_GRAD);
   // print_v(n_neuron[2], fmt::format("fast_tanh_grad_1 type_i {}: ", type_i), layer_1_grad);
   
   matmul(type_natoms[type_i], n_neuron[0], n_neuron[1], layer_1_grad, c_matrix_t[1][type_i], NULL, layer_0_grad);
-  t_timer->stamp(Timer::MATMUL_2D_2);
+  // t_timer->stamp(Timer::MATMUL_2D_2);
   // print_v(n_neuron[2], fmt::format("layer_0_grad type_i {}: ", type_i), layer_0_grad);
   
   matrix_add(type_natoms[type_i], n_neuron[1], layer_1_grad_reg, layer_0_grad);
-  t_timer->stamp(Timer::MATRIX_ADD);
+  // t_timer->stamp(Timer::MATRIX_ADD);
   // print_v(n_neuron[2], fmt::format("layer_0_grad matrix_add type_i {}: ", type_i), layer_0_grad);
   
   // layer_0_grad
   fast_tanh_grad(type_natoms[type_i] * n_neuron[1], layer_0_tanh,layer_0_grad, layer_0_grad);
-  t_timer->stamp(Timer::FAST_TANH_GRAD);
+  // t_timer->stamp(Timer::FAST_TANH_GRAD);
   // print_v(n_neuron[2], fmt::format("fast_tanh_grad_0 type_i {}: ", type_i), layer_0_grad);
   
   #ifndef HIGH_PREC
@@ -2399,7 +2413,7 @@ void DeepPot::fitting_net_normal(int type_i) {
   if(DEBUG_DP) if(tid == 0) print_v(n_axis_neuron * last_layer_size, fmt::format("descriptor_grad [n * 2048] type_{}: ", type_i), descrptor_grad);
   
   
-  t_timer->stamp(Timer::MATMUL_2D_3);
+  // t_timer->stamp(Timer::MATMUL_2D_3);
   
   memset(rg_fusion_grad, 0, type_natoms[type_i] * last_layer_size * 4);
   memset(rg_slice_grad, 0, type_natoms[type_i] * n_axis_neuron * 4);
@@ -2407,7 +2421,7 @@ void DeepPot::fitting_net_normal(int type_i) {
   matmul_3d(type_natoms[type_i], 4, last_layer_size, n_axis_neuron, rg_silce[type_i], descrptor_grad, rg_fusion_grad, false, true);
   matmul_3d(type_natoms[type_i], 4, n_axis_neuron,   last_layer_size, rg_fusion[type_i], descrptor_grad, rg_slice_grad, false, false);
   
-  t_timer->stamp(Timer::MATMUL_3D);
+  // t_timer->stamp(Timer::MATMUL_3D);
   
   if(DEBUG_DP) if(tid == 0) print_v(4 * n_axis_neuron  , fmt::format("rg_slice_grad type_{}: ", type_i), rg_slice_grad);
   
@@ -2429,7 +2443,7 @@ void DeepPot::fitting_net_normal(int type_i) {
   if(DEBUG_DP) if(tid == 0) print_v(4 * last_layer_size, fmt::format("rg_fusion_grad after / type_{}: ", type_i), rg_fusion_grad);
   
   for(int type_i_in = 0; type_i_in < ntypes; type_i_in++) {
-    t_timer->stamp();
+    // t_timer->stamp();
     int t_ptr = type_i * ntypes + type_i_in;
   
     if(comm->tabulate_flag == 5) {
@@ -2446,7 +2460,7 @@ void DeepPot::fitting_net_normal(int type_i) {
         r_matrix_grid[t_ptr][ii*4] += s_vector_grad[t_ptr][ii];
     }
   
-    t_timer->stamp(Timer::TABULATE_GRAD);
+    // t_timer->stamp(Timer::TABULATE_GRAD);
   
     if(DEBUG_DP) if(tid == 0) print_v(sel[type_i_in] * 1, fmt::format("s_vector_grad {} {}:", type_i, type_i_in), s_vector_grad[t_ptr]);
     if(DEBUG_DP) if(tid == 0) print_v(sel[type_i_in] * 4, fmt::format("r_matrix_grid {} {}:", type_i, type_i_in), r_matrix_grid[t_ptr]);
@@ -2458,7 +2472,7 @@ void DeepPot::fitting_net_normal(int type_i) {
                 type_i, type_i_in);
     } 
   
-    t_timer->stamp(Timer::PROD_FV);
+    // t_timer->stamp(Timer::PROD_FV);
   }
 }
 

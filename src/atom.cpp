@@ -3114,6 +3114,9 @@ void Atom::setMaxNum(int &_max_nloc, int &_max_nall) {
     _max_nloc = nlocal * 2;
     // int max_nloc = _thread_atom_num;
     _max_nall = (nlocal + nghost) * 2;
+
+    int _tmp = 2 * natoms / comm->nprocs;
+    _max_nloc = MAX(_max_nloc, _tmp);
 }
 
 double Atom::memory_usage()

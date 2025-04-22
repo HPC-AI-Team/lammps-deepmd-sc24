@@ -32,6 +32,8 @@ class Timer : protected Pointers {
     MODIFY,
     OUTPUT,
 
+    DW_FWD,
+    DP_TIME,
     PREPARE,
     DO_NEIGHBOR,
     PROD_ENV,
@@ -58,10 +60,6 @@ class Timer : protected Pointers {
     MATMUL_2D_3,
 
     BARRIER_PAIR,
-
-
-
-
 
     PARTICLE_MAP,
     MAKE_RHO,
