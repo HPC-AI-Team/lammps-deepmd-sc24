@@ -1517,7 +1517,7 @@ void DeepPot::prod_env_mat_a() {
           diff[1] = dcoord[j_idx * 3 + 1] - iy;
           diff[2] = dcoord[j_idx * 3 + 2] - iz;
 
-        FPTYPE rr = (diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);    
+        double rr = (diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);    
         if (rr <= rcut * rcut) {
           uint64_t key = (((uint64_t)datype[j_idx]    << 61)  & 0xe000000000000000) | 
                           (((uint64_t)(rr * 1.0E11)  << 20)  & 0x1ffffffffff00000) |
