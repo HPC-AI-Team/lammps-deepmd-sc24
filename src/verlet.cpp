@@ -278,6 +278,7 @@ void Verlet::run(int n)
       timer->stamp(Timer::PAIR);
     }
 
+
     // self_timer->stamp();
     // MPI_Barrier(world);
     // self_timer->stamp(Timer::PREPARE);
@@ -308,6 +309,8 @@ void Verlet::run(int n)
       comm->reverse_comm();
       timer->stamp(Timer::COMM);
     }
+
+
 
     // force modifications, final time integration, diagnostics
 

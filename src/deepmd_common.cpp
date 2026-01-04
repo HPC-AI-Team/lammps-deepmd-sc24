@@ -170,12 +170,12 @@ void matmul_3d(const int t, const int m, const int n, const int k,
               A+ii*m*k, B+ii*k*n, C+ii*m*n);
     }
   }
-  // else if(k == 128 && n == 16 && m == 4 && _transpose_a == false && _transpose_b == false) {
-  //   for(int ii = 0; ii < t; ii++) {
-  //     matmul_4x128_128x16_nn(m, n, k, 
-  //             A+ii*m*k, B+ii*k*n, C+ii*m*n);
-  //   }
-  // }
+  else if(k == 128 && n == 16 && m == 4 && _transpose_a == false && _transpose_b == false) {
+    for(int ii = 0; ii < t; ii++) {
+      matmul_4x128_128x16_nn(m, n, k, 
+              A+ii*m*k, B+ii*k*n, C+ii*m*n);
+    }
+  }
   else {
     // if(t > 3 || _transpose_a == true || _transpose_a == true){
       for(int ii = 0; ii < t; ii++) {

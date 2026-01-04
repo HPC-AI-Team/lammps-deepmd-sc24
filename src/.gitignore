@@ -1662,7 +1662,5 @@ output/
 /pair_vashishta*.h
 
 BIN_deepmd/water_graph-compress-preprocess-gemm_tanh_float.pb
-BIN_deepmd_copper/pb_data_copper.dat
-BIN_deepmd_copper/pb_data_copper.dat
 BIN_deepmd/water_compressfp64.pb
 BIN_deepmd/graph-compress-preprocess-gemm_tanh.pb

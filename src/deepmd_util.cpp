@@ -968,6 +968,8 @@ void DeepPot::init(FPTYPE _rcut, FPTYPE _rcut_smth,
 
   // if(comm->me == 0) store_pb_data();
 
+  // if(comm->me == 0) utils::logmesg(lmp, fmt::format("[INFO] finish store_pb_data \n"));
+
   max_nnei = 0;
   for(auto i : sel) if(i > max_nnei) max_nnei = i;
   max_all_nei = ntypes == 1 ? nnei :  3 * nnei;
@@ -1232,7 +1234,7 @@ void DeepPot::fitting_net() {
     // matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix[0][type_i], c_bias[0][type_i], layer_0);
 
     #ifdef T_FLOAT_16
-    if(comm->fp16_flag){
+    if(comm->fp16_flag) {
       if(type_natoms[type_i] <= 3){
         matmul(type_natoms[type_i], n_neuron[0], dim_descrpt,  inputs_i, c_matrix_fp16[0][type_i], c_bias[0][type_i], layer_0);
       }
@@ -1454,6 +1456,18 @@ void DeepPot::prod_env_mat_a() {
   // prod_env_mat_a_cpu_opt
 
   // env_mat_a_cpu_normalize_preprocessed (d_em_a, d_em_a_deriv, d_rij_a, coord, type, ii, fmt_nlist_a, sec, rcut_smth, rcut, avg, std);
+
+  for(int type_i = 0; type_i < ntypes; type_i++) {
+    for (int type_i_in = 0; type_i_in < ntypes; ++type_i_in) {
+      int t_ptr = type_i * ntypes + type_i_in;
+      memset(descrpt[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4);
+      memset(xyz_scatter[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in]);
+      memset(descrpt_deriv[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 4 * 3);
+      memset(rij[t_ptr], 0, sizeof(FPTYPE) *  type_natoms[type_i] * sel[type_i_in] * 3);
+    }
+  }
+
+  if(DEBUG_MSG) if(tid == 0) utils::logmesg(lmp, fmt::format("[info] clear memory \n"));
   
   for(int type_i = 0; type_i < ntypes; type_i++) {
     for (int ii = sec_type_atom[type_i],  _ii = 0; ii < sec_type_atom[type_i+1]; ++ii, ++_ii) {
